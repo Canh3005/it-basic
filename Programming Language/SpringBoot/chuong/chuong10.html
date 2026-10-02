@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chương 10 — JWT &amp; OAuth2 — xác thực stateless cho API hiện đại · Spring Boot Sub-pillar</title>
+  <meta name="description" content="Session so với token, cấu trúc JWT, access token và refresh token có rotation, Spring Security OAuth2 Resource Server với Nimbus, thu hồi token, lưu token ở frontend, OAuth2/OIDC, Authorization Code + PKCE và đăng nhập bằng nhà cung cấp danh tính." />
+  <meta name="theme-color" content="#4a9a28" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Bitter:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="../../shared/css/base.css">
+  <link rel="stylesheet" href="../css/theme.css">
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="container">
+      <a class="site-logo" href="../../../index.html">
+        <span class="mark mark-spring">Sb</span>
+        Spring Boot · IT Basic
+      </a>
+      <nav>
+        <ul class="site-nav">
+          <li><a href="../../../index.html">IT Basic</a></li>
+          <li><a href="../../index.html">Pillar 9</a></li>
+          <li><a href="../../Java/index.html">Java</a></li>
+          <li><a href="../index.html" class="active">Spring Boot</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <div class="container">
+    <header class="chapter-header">
+      <div class="breadcrumb">
+        <a href="../../../index.html">IT Basic</a><span class="sep">/</span>
+        <a href="../../index.html">Pillar 9</a><span class="sep">/</span>
+        <a href="../index.html">Spring Boot</a><span class="sep">/</span>
+        <span>Chương 10</span>
+      </div>
+      <div class="chapter-num">Chương 10 · JWT &amp; OAuth2</div>
+      <h1 style="font-size: 2.6rem; margin: 0 0 12px; color: var(--ink);">
+        JWT &amp; OAuth2 — xác thực stateless cho API hiện đại
+      </h1>
+      <p class="lead">
+        Chương 9 dùng HTTP Basic: gửi email + mật khẩu ở <em>mọi</em> request — không thể chấp nhận cho ứng dụng thật. Các SPA (React), mobile app và microservice cần một cách khác: đăng nhập <strong>một lần</strong>, nhận <strong>token</strong> ngắn hạn, rồi mang token đó theo mỗi request. Chương này xây hệ thống đó bằng <strong>JWT</strong> trên chính <code>SecurityFilterChain</code> đã học, thêm <strong>refresh token</strong> có xoay vòng, và đặt tất cả vào bức tranh rộng hơn của <strong>OAuth2/OpenID Connect</strong>.
+      </p>
+      <div class="chapter-meta">
+        <span class="item"><strong>Bài tập:</strong> 5</span>
+        <span class="item"><strong>Quiz:</strong> 6</span>
+        <span class="item"><strong>Prerequisites:</strong> Chương 1-9</span>
+      </div>
+    </header>
+
+    <div class="layout">
+
+      <main class="prose">
+
+        <div class="callout callout-goal">
+          <div class="callout-label">🎯 Mục tiêu chương</div>
+          <ul>
+            <li>So sánh <strong>session</strong> và <strong>token</strong>; biết khi nào chọn cái nào.</li>
+            <li>Đọc hiểu cấu trúc <strong>JWT</strong> (header, payload, chữ ký) và các <strong>claim</strong> chuẩn; biết JWT <em>ký</em> chứ không <em>mã hoá</em>.</li>
+            <li>Cài <strong>đăng nhập → access token → gọi API</strong> bằng <strong>Spring OAuth2 Resource Server</strong> (Nimbus).</li>
+            <li>Thiết kế <strong>refresh token</strong> với <strong>rotation</strong> và phát hiện tái sử dụng.</li>
+            <li>Xử lý bài toán <strong>thu hồi token</strong> và biết nơi <strong>lưu token</strong> ở frontend.</li>
+            <li>Tránh các <strong>lỗi JWT</strong> kinh điển (secret yếu, thiếu <code>exp</code>, không kiểm <code>iss</code>/<code>aud</code>).</li>
+            <li>Hiểu <strong>OAuth2/OIDC</strong>: các vai, <strong>Authorization Code + PKCE</strong>; tích hợp IdP (Google, Keycloak) ở mức nhập môn.</li>
+          </ul>
+        </div>
+
+        <h2 id="session-vs-token">1. Session hay token?</h2>
+
+        <div class="jvm-flow">
+          <div class="stages">
+            <div class="stage"><div class="stage-title">Session (stateful)</div><div class="stage-content">Server lưu <code>sessionId → user</code> trong bộ nhớ/Redis; client giữ cookie <code>JSESSIONID</code></div></div>
+            <div class="stage blue"><div class="stage-title">Mỗi request</div><div class="stage-content">Cookie gửi <code>sessionId</code> → server <strong>tra bảng</strong> → biết user</div></div>
+            <div class="stage"><div class="stage-title">Token (stateless)</div><div class="stage-content">Server <strong>ký</strong> một token chứa danh tính; client giữ token</div></div>
+            <div class="stage blue"><div class="stage-title">Mỗi request</div><div class="stage-content">Header <code>Authorization: Bearer &lt;token&gt;</code> → server <strong>kiểm chữ ký</strong> → biết user, <em>không tra gì</em></div></div>
+          </div>
+          <div class="caption">Khác biệt cốt lõi: ai giữ trạng thái đăng nhập — server hay token.</div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th></th><th>Session + cookie</th><th>Token (JWT)</th></tr></thead>
+            <tbody>
+              <tr><td>Trạng thái ở server</td><td>Có (cần lưu &amp; đồng bộ khi scale ngang → Redis)</td><td><strong>Không</strong> — mọi instance tự xác minh được</td></tr>
+              <tr><td>Thu hồi tức thì</td><td>✅ Xoá session</td><td>❌ Khó — token sống đến khi hết hạn (mục 6)</td></tr>
+              <tr><td>Phù hợp</td><td>Web truyền thống, server-side rendering</td><td>SPA, mobile, <strong>microservice</strong>, API cho bên thứ ba</td></tr>
+              <tr><td>Gửi bằng</td><td>Cookie (trình duyệt tự gửi ⇒ cần chống CSRF)</td><td>Header <code>Authorization</code> (code client tự gắn ⇒ không CSRF)</td></tr>
+              <tr><td>Nhiều domain/dịch vụ</td><td>Khó chia sẻ</td><td>Dễ: dịch vụ nào có khoá xác minh đều tin được</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout callout-tip">
+          <div class="callout-label">💡 Không có "tốt hơn tuyệt đối"</div>
+          <p>Ứng dụng web monolith một domain: <strong>session</strong> đơn giản và an toàn, đừng ép JWT. API dùng chung cho SPA + mobile + nhiều service: <strong>JWT</strong> là hợp lý. Chọn theo nhu cầu, không theo mốt.</p>
+        </div>
+
+        <h2 id="jwt">2. JWT — cấu trúc và bản chất</h2>
+
+        <p><strong>JWT</strong> (JSON Web Token, RFC 7519) là chuỗi gồm ba phần Base64URL ngăn bởi dấu chấm:</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Một JWT</span><button class="copy-btn">Copy</button></div>
+<pre><code>eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhbkBleGFtcGxlLmNvbSIsInJvbGVzIjpbIlVTRVIiXSwiaWF0IjoxNzA5MjUxMjAwLCJleHAiOjE3MDkyNTIxMDB9.8Q2s5yH0m7Q3jN2k9wX1vL6bP4tR7aU0cD5eF8gH9iJ
+└──────────── header ───────────┘ └──────────────────────────────────── payload ─────────────────────────────────────┘ └──────── signature ────────┘</code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Header</span><button class="copy-btn">Copy</button></div>
+<pre><code>{ <span class="tok-cls">"alg"</span>: <span class="tok-str">"HS256"</span>, <span class="tok-cls">"typ"</span>: <span class="tok-str">"JWT"</span> }</code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Payload (các claim)</span><button class="copy-btn">Copy</button></div>
+<pre><code>{
+  <span class="tok-cls">"iss"</span>: <span class="tok-str">"shop-api"</span>,                 // issuer — ai phát hành
+  <span class="tok-cls">"sub"</span>: <span class="tok-str">"an@example.com"</span>,           // subject — token này nói về ai
+  <span class="tok-cls">"aud"</span>: <span class="tok-str">"shop-web"</span>,                 // audience — dành cho ai
+  <span class="tok-cls">"iat"</span>: <span class="tok-num">1709251200</span>,                 // issued at
+  <span class="tok-cls">"exp"</span>: <span class="tok-num">1709252100</span>,                 // expiry — hết hạn (giây Unix)
+  <span class="tok-cls">"jti"</span>: <span class="tok-str">"9f2c…"</span>,                    // id duy nhất của token (dùng cho thu hồi)
+  <span class="tok-cls">"roles"</span>: [<span class="tok-str">"USER"</span>]                  // claim tuỳ biến của bạn
+}</code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Chữ ký (HS256)</span><button class="copy-btn">Copy</button></div>
+<pre><code>signature = HMAC-SHA256( base64url(header) + "." + base64url(payload), secretKey )</code></pre>
+        </div>
+        <div class="java-rule"><strong>JWT được <em>ký</em> (chống sửa), KHÔNG được <em>mã hoá</em> (ai cầm token cũng đọc được payload).</strong> Chỉ cần Base64-decode là thấy hết. Vì vậy: <em>không bao giờ</em> đặt mật khẩu, số thẻ, dữ liệu nhạy cảm vào payload. Chữ ký đảm bảo <strong>toàn vẹn &amp; xuất xứ</strong>, không đảm bảo <strong>bí mật</strong>.</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Thuật toán</th><th>Khoá</th><th>Ai ký / ai kiểm</th><th>Dùng khi</th></tr></thead>
+            <tbody>
+              <tr><td><strong>HS256</strong> (HMAC)</td><td>Một <strong>khoá bí mật chung</strong></td><td>Ai kiểm được cũng <em>ký được</em></td><td>Một ứng dụng/ít dịch vụ tin nhau</td></tr>
+              <tr><td><strong>RS256 / ES256</strong> (bất đối xứng)</td><td>Khoá <strong>riêng</strong> (ký) + khoá <strong>công khai</strong> (kiểm)</td><td>Chỉ máy chủ xác thực có khoá riêng; mọi dịch vụ chỉ cần khoá công khai</td><td><strong>Microservice</strong>, IdP bên ngoài, công khai JWKS</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="luong">3. Luồng đăng nhập với access + refresh token</h2>
+
+        <div class="jvm-flow">
+          <div class="stages">
+            <div class="stage"><div class="stage-title">1. Đăng nhập</div><div class="stage-content"><code>POST /api/auth/login</code> {email, password}</div></div>
+            <div class="stage blue"><div class="stage-title">2. Server xác thực</div><div class="stage-content"><code>AuthenticationManager</code> (chương 9) → phát <strong>access token</strong> (15 phút) + <strong>refresh token</strong> (7-30 ngày)</div></div>
+            <div class="stage"><div class="stage-title">3. Gọi API</div><div class="stage-content"><code>Authorization: Bearer &lt;access&gt;</code> — server chỉ kiểm chữ ký + <code>exp</code></div></div>
+            <div class="stage blue"><div class="stage-title">4. Access hết hạn</div><div class="stage-content">API trả <code>401</code></div></div>
+            <div class="stage"><div class="stage-title">5. Làm mới</div><div class="stage-content"><code>POST /api/auth/refresh</code> {refreshToken} → <strong>cặp token mới</strong> (refresh cũ bị vô hiệu)</div></div>
+            <div class="stage blue"><div class="stage-title">6. Hết refresh / logout</div><div class="stage-content">Bắt đăng nhập lại</div></div>
+          </div>
+          <div class="caption">Access token ngắn hạn giảm thiệt hại khi bị lộ; refresh token dài hạn nhưng <em>được kiểm soát ở server</em>.</div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th></th><th>Access token</th><th>Refresh token</th></tr></thead>
+            <tbody>
+              <tr><td>Dạng</td><td>JWT tự chứa</td><td><strong>Chuỗi ngẫu nhiên</strong> (opaque) — không phải JWT</td></tr>
+              <tr><td>Thời hạn</td><td>Ngắn: 5-15 phút</td><td>Dài: ngày - tuần</td></tr>
+              <tr><td>Server lưu?</td><td>Không</td><td><strong>Có</strong> — lưu <strong>hash</strong> trong DB để thu hồi/xoay vòng</td></tr>
+              <tr><td>Gửi tới</td><td>Mọi API</td><td>Chỉ endpoint <code>/refresh</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="cai-dat">4. Cài đặt với Spring OAuth2 Resource Server</h2>
+
+        <p>Có hai cách: tự viết filter đọc JWT (bằng <code>jjwt</code>), hoặc dùng <strong>hỗ trợ JWT có sẵn của Spring Security</strong> (Nimbus JOSE). Chọn cách sau: ít code bảo mật tự viết = ít chỗ sai, và cùng cơ chế dùng được khi sau này đổi sang IdP ngoài.</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>pom.xml</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-kw">&lt;dependency</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;groupId</span><span class="tok-kw">&gt;</span>org.springframework.boot<span class="tok-kw">&lt;/groupId</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;artifactId</span><span class="tok-kw">&gt;</span>spring-boot-starter-oauth2-resource-server<span class="tok-kw">&lt;/artifactId</span><span class="tok-kw">&gt;</span>   <span class="tok-com">&lt;!-- đã gồm Nimbus JOSE + JWT --&gt;</span>
+<span class="tok-kw">&lt;/dependency</span><span class="tok-kw">&gt;</span></code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>application.yml + AppProperties</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-cls">app</span>:
+  <span class="tok-cls">jwt</span>:
+    <span class="tok-cls">secret</span>: ${JWT_SECRET}<span class="tok-com">            # &gt;= 32 BYTE ngẫu nhiên (xem chương 3 về bí mật); thiếu → fail fast</span>
+    <span class="tok-cls">issuer</span>: shop-api
+    <span class="tok-cls">access-ttl</span>: 15m
+    <span class="tok-cls">refresh-ttl</span>: 14d</code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>JwtConfig.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Configuration</span>
+<span class="tok-kw">class</span> <span class="tok-cls">JwtConfig</span> {
+
+    <span class="tok-ann">@Bean</span>
+    <span class="tok-cls">SecretKey</span> <span class="tok-fn">jwtKey</span>(<span class="tok-cls">AppProperties</span> props) {
+        <span class="tok-kw">byte</span>[] bytes = props.<span class="tok-fn">jwt</span>().<span class="tok-fn">secret</span>().<span class="tok-fn">getBytes</span>(<span class="tok-cls">StandardCharsets</span>.<span class="tok-cls">UTF_8</span>);
+        <span class="tok-kw">if</span> (bytes.length &lt; <span class="tok-num">32</span>) <span class="tok-kw">throw</span> <span class="tok-kw">new</span> <span class="tok-cls">IllegalStateException</span>(<span class="tok-str">"JWT secret phải &gt;= 32 byte cho HS256"</span>);
+        <span class="tok-kw">return</span> <span class="tok-kw">new</span> <span class="tok-cls">SecretKeySpec</span>(bytes, <span class="tok-str">"HmacSHA256"</span>);
+    }
+
+    <span class="tok-ann">@Bean</span>
+    <span class="tok-cls">JwtEncoder</span> <span class="tok-fn">jwtEncoder</span>(<span class="tok-cls">SecretKey</span> key) {                       <span class="tok-com">// ký token</span>
+        <span class="tok-kw">return</span> <span class="tok-kw">new</span> <span class="tok-cls">NimbusJwtEncoder</span>(<span class="tok-kw">new</span> <span class="tok-cls">ImmutableSecret</span>&lt;&gt;(key));
+    }
+
+    <span class="tok-ann">@Bean</span>
+    <span class="tok-cls">JwtDecoder</span> <span class="tok-fn">jwtDecoder</span>(<span class="tok-cls">SecretKey</span> key, <span class="tok-cls">AppProperties</span> props) {  <span class="tok-com">// kiểm token</span>
+        <span class="tok-cls">NimbusJwtDecoder</span> decoder = <span class="tok-cls">NimbusJwtDecoder</span>.<span class="tok-fn">withSecretKey</span>(key).<span class="tok-fn">macAlgorithm</span>(<span class="tok-cls">MacAlgorithm</span>.<span class="tok-cls">HS256</span>).<span class="tok-fn">build</span>();
+        decoder.<span class="tok-fn">setJwtValidator</span>(<span class="tok-cls">JwtValidators</span>.<span class="tok-fn">createDefaultWithIssuer</span>(props.<span class="tok-fn">jwt</span>().<span class="tok-fn">issuer</span>()));   <span class="tok-com">// exp, nbf + iss</span>
+        <span class="tok-kw">return</span> decoder;
+    }
+
+    <span class="tok-ann">@Bean</span>
+    <span class="tok-cls">JwtAuthenticationConverter</span> <span class="tok-fn">jwtAuthConverter</span>() {              <span class="tok-com">// claim "roles" → authorities ROLE_*</span>
+        <span class="tok-cls">JwtGrantedAuthoritiesConverter</span> g = <span class="tok-kw">new</span> <span class="tok-cls">JwtGrantedAuthoritiesConverter</span>();
+        g.<span class="tok-fn">setAuthoritiesClaimName</span>(<span class="tok-str">"roles"</span>);
+        g.<span class="tok-fn">setAuthorityPrefix</span>(<span class="tok-str">"ROLE_"</span>);
+        <span class="tok-cls">JwtAuthenticationConverter</span> c = <span class="tok-kw">new</span> <span class="tok-cls">JwtAuthenticationConverter</span>();
+        c.<span class="tok-fn">setJwtGrantedAuthoritiesConverter</span>(g);
+        <span class="tok-kw">return</span> c;
+    }
+
+    <span class="tok-ann">@Bean</span>
+    <span class="tok-cls">AuthenticationManager</span> <span class="tok-fn">authenticationManager</span>(<span class="tok-cls">AuthenticationConfiguration</span> cfg) <span class="tok-kw">throws</span> <span class="tok-cls">Exception</span> {
+        <span class="tok-kw">return</span> cfg.<span class="tok-fn">getAuthenticationManager</span>();                   <span class="tok-com">// dùng UserDetailsService + PasswordEncoder của chương 9</span>
+    }
+}</code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>SecurityConfig.java — thay httpBasic bằng resource server</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Bean</span>
+<span class="tok-cls">SecurityFilterChain</span> <span class="tok-fn">api</span>(<span class="tok-cls">HttpSecurity</span> http, <span class="tok-cls">JwtAuthenticationConverter</span> conv,
+                        <span class="tok-cls">JsonAuthenticationEntryPoint</span> entryPoint, <span class="tok-cls">JsonAccessDeniedHandler</span> denied) <span class="tok-kw">throws</span> <span class="tok-cls">Exception</span> {
+    http
+        .<span class="tok-fn">authorizeHttpRequests</span>(auth -&gt; auth
+            .<span class="tok-fn">requestMatchers</span>(<span class="tok-str">"/api/auth/**"</span>, <span class="tok-str">"/actuator/health"</span>).<span class="tok-fn">permitAll</span>()
+            .<span class="tok-fn">requestMatchers</span>(<span class="tok-str">"/api/admin/**"</span>).<span class="tok-fn">hasRole</span>(<span class="tok-str">"ADMIN"</span>)
+            .<span class="tok-fn">anyRequest</span>().<span class="tok-fn">authenticated</span>())
+        .<span class="tok-fn">oauth2ResourceServer</span>(oauth -&gt; oauth
+            .<span class="tok-fn">jwt</span>(jwt -&gt; jwt.<span class="tok-fn">jwtAuthenticationConverter</span>(conv))
+            .<span class="tok-fn">authenticationEntryPoint</span>(entryPoint)                  <span class="tok-com">// 401 dạng ProblemDetail khi token thiếu/sai/hết hạn</span>
+            .<span class="tok-fn">accessDeniedHandler</span>(denied))
+        .<span class="tok-fn">exceptionHandling</span>(e -&gt; e.<span class="tok-fn">accessDeniedHandler</span>(denied))
+        .<span class="tok-fn">csrf</span>(csrf -&gt; csrf.<span class="tok-fn">disable</span>())                              <span class="tok-com">// OK: Bearer header, không cookie (chương 9 mục 8)</span>
+        .<span class="tok-fn">sessionManagement</span>(s -&gt; s.<span class="tok-fn">sessionCreationPolicy</span>(<span class="tok-cls">SessionCreationPolicy</span>.<span class="tok-cls">STATELESS</span>))
+        .<span class="tok-fn">cors</span>(<span class="tok-cls">Customizer</span>.<span class="tok-fn">withDefaults</span>());
+    <span class="tok-kw">return</span> http.<span class="tok-fn">build</span>();
+}</code></pre>
+        </div>
+
+        <h3 id="phat-token">4.1. Phát token khi đăng nhập</h3>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>TokenService.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Service</span>
+<span class="tok-kw">class</span> <span class="tok-cls">TokenService</span> {
+
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">JwtEncoder</span> encoder;
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">AppProperties</span> props;
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">Clock</span> clock;                                          <span class="tok-com">// tiêm Clock để test được (chương 2, 11)</span>
+    <span class="tok-com">// constructor ...</span>
+
+    <span class="tok-cls">String</span> <span class="tok-fn">issueAccessToken</span>(<span class="tok-cls">Authentication</span> auth) {
+        <span class="tok-cls">Instant</span> now = clock.<span class="tok-fn">instant</span>();
+        <span class="tok-cls">List</span>&lt;<span class="tok-cls">String</span>&gt; roles = auth.<span class="tok-fn">getAuthorities</span>().<span class="tok-fn">stream</span>()
+                .<span class="tok-fn">map</span>(<span class="tok-cls">GrantedAuthority</span>::getAuthority)
+                .<span class="tok-fn">map</span>(a -&gt; a.<span class="tok-fn">startsWith</span>(<span class="tok-str">"ROLE_"</span>) ? a.<span class="tok-fn">substring</span>(<span class="tok-num">5</span>) : a)      <span class="tok-com">// "ROLE_ADMIN" → "ADMIN" (converter thêm lại)</span>
+                .<span class="tok-fn">toList</span>();
+
+        <span class="tok-cls">JwtClaimsSet</span> claims = <span class="tok-cls">JwtClaimsSet</span>.<span class="tok-fn">builder</span>()
+                .<span class="tok-fn">issuer</span>(props.<span class="tok-fn">jwt</span>().<span class="tok-fn">issuer</span>())
+                .<span class="tok-fn">subject</span>(auth.<span class="tok-fn">getName</span>())
+                .<span class="tok-fn">issuedAt</span>(now)
+                .<span class="tok-fn">expiresAt</span>(now.<span class="tok-fn">plus</span>(props.<span class="tok-fn">jwt</span>().<span class="tok-fn">accessTtl</span>()))
+                .<span class="tok-fn">id</span>(<span class="tok-cls">UUID</span>.<span class="tok-fn">randomUUID</span>().<span class="tok-fn">toString</span>())                          <span class="tok-com">// jti</span>
+                .<span class="tok-fn">claim</span>(<span class="tok-str">"roles"</span>, roles)
+                .<span class="tok-fn">build</span>();
+
+        <span class="tok-cls">JwsHeader</span> header = <span class="tok-cls">JwsHeader</span>.<span class="tok-fn">with</span>(<span class="tok-cls">MacAlgorithm</span>.<span class="tok-cls">HS256</span>).<span class="tok-fn">build</span>();
+        <span class="tok-kw">return</span> encoder.<span class="tok-fn">encode</span>(<span class="tok-cls">JwtEncoderParameters</span>.<span class="tok-fn">from</span>(header, claims)).<span class="tok-fn">getTokenValue</span>();
+    }
+}
+
+<span class="tok-ann">@RestController</span>
+<span class="tok-ann">@RequestMapping</span>(<span class="tok-str">"/api/auth"</span>)
+<span class="tok-kw">class</span> <span class="tok-cls">AuthController</span> {
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">AuthenticationManager</span> authManager;
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">TokenService</span> tokens;
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">RefreshTokenService</span> refreshTokens;
+    <span class="tok-com">// constructor ...</span>
+
+    <span class="tok-ann">@PostMapping</span>(<span class="tok-str">"/login"</span>)
+    <span class="tok-cls">TokenResponse</span> <span class="tok-fn">login</span>(<span class="tok-ann">@Valid</span> <span class="tok-ann">@RequestBody</span> <span class="tok-cls">LoginRequest</span> req) {
+        <span class="tok-cls">Authentication</span> auth = authManager.<span class="tok-fn">authenticate</span>(               <span class="tok-com">// sai mật khẩu → BadCredentialsException → 401</span>
+                <span class="tok-cls">UsernamePasswordAuthenticationToken</span>.<span class="tok-fn">unauthenticated</span>(req.<span class="tok-fn">email</span>(), req.<span class="tok-fn">password</span>()));
+        <span class="tok-kw">return</span> <span class="tok-kw">new</span> <span class="tok-cls">TokenResponse</span>(tokens.<span class="tok-fn">issueAccessToken</span>(auth), <span class="tok-str">"Bearer"</span>, <span class="tok-num">900</span>, refreshTokens.<span class="tok-fn">issue</span>(auth.<span class="tok-fn">getName</span>()));
+    }
+}
+
+<span class="tok-kw">public</span> <span class="tok-kw">record</span> <span class="tok-cls">LoginRequest</span>(<span class="tok-ann">@NotBlank</span> <span class="tok-ann">@Email</span> <span class="tok-cls">String</span> email, <span class="tok-ann">@NotBlank</span> <span class="tok-cls">String</span> password) { }
+<span class="tok-kw">public</span> <span class="tok-kw">record</span> <span class="tok-cls">TokenResponse</span>(<span class="tok-cls">String</span> accessToken, <span class="tok-cls">String</span> tokenType, <span class="tok-kw">long</span> expiresIn, <span class="tok-cls">String</span> refreshToken) { }</code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Thử</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-fn">TOKEN=$(curl</span> <span class="tok-kw">-s</span> <span class="tok-kw">-X</span> POST localhost:8080/api/auth/login <span class="tok-kw">-H</span> <span class="tok-str">'Content-Type: application/json'</span> \
+        <span class="tok-fn">-d</span> <span class="tok-str">'{"email":"an@example.com","password":"Matkhau123"}'</span> | jq <span class="tok-kw">-r</span> .accessToken)
+
+<span class="tok-fn">curl</span> <span class="tok-kw">-i</span> localhost:8080/api/me <span class="tok-kw">-H</span> <span class="tok-str">"Authorization: Bearer $TOKEN"</span>       <span class="tok-com"> # 200</span>
+<span class="tok-fn">curl</span> <span class="tok-kw">-i</span> localhost:8080/api/me                                          <span class="tok-com"> # 401</span>
+<span class="tok-fn">curl</span> <span class="tok-kw">-i</span> localhost:8080/api/admin/users <span class="tok-kw">-H</span> <span class="tok-str">"Authorization: Bearer $TOKEN"</span>  <span class="tok-com"> # 403 (không phải ADMIN)</span>
+
+<span class="tok-com"># Giải mã payload để xem (không cần khoá):</span>
+<span class="tok-fn">echo</span> $TOKEN | cut <span class="tok-kw">-d.</span> <span class="tok-kw">-f2</span> | base64 <span class="tok-kw">-d</span> 2&gt;/dev/null | jq .</code></pre>
+        </div>
+
+        <h2 id="refresh">5. Refresh token và rotation</h2>
+
+        <p>Refresh token sống lâu ⇒ nếu bị đánh cắp, kẻ cắp có thể làm mới <em>vô hạn</em>. Giảm rủi ro bằng <strong>rotation</strong>: mỗi lần dùng refresh token, phát <strong>cặp mới</strong> và <strong>vô hiệu token cũ</strong>. Nếu token <strong>cũ</strong> xuất hiện lại (bị dùng hai lần) ⇒ chắc chắn có kẻ sao chép ⇒ thu hồi <strong>cả họ token</strong>.</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>RefreshToken.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Entity</span>
+<span class="tok-ann">@Table</span>(name = <span class="tok-str">"refresh_tokens"</span>, indexes = <span class="tok-ann">@Index</span>(columnList = <span class="tok-str">"tokenHash"</span>, unique = <span class="tok-kw">true</span>))
+<span class="tok-kw">public</span> <span class="tok-kw">class</span> <span class="tok-cls">RefreshToken</span> {
+    <span class="tok-ann">@Id</span> <span class="tok-ann">@GeneratedValue</span>(strategy = <span class="tok-cls">GenerationType</span>.<span class="tok-cls">IDENTITY</span>) <span class="tok-kw">private</span> <span class="tok-cls">Long</span> id;
+    <span class="tok-ann">@Column</span>(nullable = <span class="tok-kw">false</span>, unique = <span class="tok-kw">true</span>, length = <span class="tok-num">64</span>) <span class="tok-kw">private</span> <span class="tok-cls">String</span> tokenHash;   <span class="tok-com">// SHA-256 hex — KHÔNG lưu token gốc</span>
+    <span class="tok-ann">@Column</span>(nullable = <span class="tok-kw">false</span>) <span class="tok-kw">private</span> <span class="tok-cls">String</span> userEmail;
+    <span class="tok-ann">@Column</span>(nullable = <span class="tok-kw">false</span>) <span class="tok-kw">private</span> <span class="tok-cls">String</span> familyId;      <span class="tok-com">// mọi token xoay vòng từ một lần đăng nhập chung family</span>
+    <span class="tok-ann">@Column</span>(nullable = <span class="tok-kw">false</span>) <span class="tok-kw">private</span> <span class="tok-cls">Instant</span> expiresAt;
+    <span class="tok-kw">private</span> <span class="tok-kw">boolean</span> used;                                   <span class="tok-com">// đã đổi lấy token mới</span>
+    <span class="tok-kw">private</span> <span class="tok-kw">boolean</span> revoked;
+    <span class="tok-com">// constructor, getter ...</span>
+}</code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>RefreshTokenService.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Service</span>
+<span class="tok-kw">class</span> <span class="tok-cls">RefreshTokenService</span> {
+
+    <span class="tok-kw">private</span> <span class="tok-kw">static</span> <span class="tok-kw">final</span> <span class="tok-cls">SecureRandom</span> <span class="tok-cls">RNG</span> = <span class="tok-kw">new</span> <span class="tok-cls">SecureRandom</span>();
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">RefreshTokenRepository</span> repo;
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">AppProperties</span> props;
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">Clock</span> clock;
+    <span class="tok-com">// constructor ...</span>
+
+    <span class="tok-ann">@Transactional</span>
+    <span class="tok-kw">public</span> <span class="tok-cls">String</span> <span class="tok-fn">issue</span>(<span class="tok-cls">String</span> email) { <span class="tok-kw">return</span> <span class="tok-fn">create</span>(email, <span class="tok-cls">UUID</span>.<span class="tok-fn">randomUUID</span>().<span class="tok-fn">toString</span>()); }
+
+    <span class="tok-ann">@Transactional</span>(noRollbackFor = <span class="tok-cls">TokenReuseException</span>.<span class="tok-kw">class</span>)       <span class="tok-com">// phải COMMIT việc thu hồi dù ném lỗi</span>
+    <span class="tok-kw">public</span> <span class="tok-cls">Rotated</span> <span class="tok-fn">rotate</span>(<span class="tok-cls">String</span> presented) {
+        <span class="tok-cls">RefreshToken</span> t = repo.<span class="tok-fn">findByTokenHash</span>(<span class="tok-fn">sha256</span>(presented))
+                .<span class="tok-fn">orElseThrow</span>(() -&gt; <span class="tok-kw">new</span> <span class="tok-cls">InvalidTokenException</span>(<span class="tok-str">"Refresh token không hợp lệ"</span>));
+
+        <span class="tok-kw">if</span> (t.<span class="tok-fn">isRevoked</span>() || t.<span class="tok-fn">getExpiresAt</span>().<span class="tok-fn">isBefore</span>(clock.<span class="tok-fn">instant</span>()))
+            <span class="tok-kw">throw</span> <span class="tok-kw">new</span> <span class="tok-cls">InvalidTokenException</span>(<span class="tok-str">"Refresh token hết hạn hoặc đã thu hồi"</span>);
+
+        <span class="tok-kw">if</span> (t.<span class="tok-fn">isUsed</span>()) {                                           <span class="tok-com">// ⚠️ đã đổi rồi mà lại xuất hiện → bị đánh cắp</span>
+            repo.<span class="tok-fn">revokeFamily</span>(t.<span class="tok-fn">getFamilyId</span>());                      <span class="tok-com">// UPDATE … SET revoked = true WHERE family_id = ?</span>
+            <span class="tok-kw">throw</span> <span class="tok-kw">new</span> <span class="tok-cls">TokenReuseException</span>(<span class="tok-str">"Phát hiện tái sử dụng refresh token — mọi phiên bị thu hồi"</span>);
+        }
+        t.<span class="tok-fn">markUsed</span>();
+        <span class="tok-kw">return</span> <span class="tok-kw">new</span> <span class="tok-cls">Rotated</span>(t.<span class="tok-fn">getUserEmail</span>(), <span class="tok-fn">create</span>(t.<span class="tok-fn">getUserEmail</span>(), t.<span class="tok-fn">getFamilyId</span>()));   <span class="tok-com">// cùng family</span>
+    }
+
+    <span class="tok-kw">private</span> <span class="tok-cls">String</span> <span class="tok-fn">create</span>(<span class="tok-cls">String</span> email, <span class="tok-cls">String</span> familyId) {
+        <span class="tok-kw">byte</span>[] raw = <span class="tok-kw">new</span> <span class="tok-kw">byte</span>[<span class="tok-num">32</span>]; <span class="tok-cls">RNG</span>.<span class="tok-fn">nextBytes</span>(raw);                              <span class="tok-com">// 256 bit ngẫu nhiên mật mã</span>
+        <span class="tok-cls">String</span> token = <span class="tok-cls">Base64</span>.<span class="tok-fn">getUrlEncoder</span>().<span class="tok-fn">withoutPadding</span>().<span class="tok-fn">encodeToString</span>(raw);
+        repo.<span class="tok-fn">save</span>(<span class="tok-kw">new</span> <span class="tok-cls">RefreshToken</span>(<span class="tok-fn">sha256</span>(token), email, familyId, clock.<span class="tok-fn">instant</span>().<span class="tok-fn">plus</span>(props.<span class="tok-fn">jwt</span>().<span class="tok-fn">refreshTtl</span>())));
+        <span class="tok-kw">return</span> token;                                                <span class="tok-com">// chỉ trả MỘT LẦN cho client</span>
+    }
+
+    <span class="tok-kw">private</span> <span class="tok-kw">static</span> <span class="tok-cls">String</span> <span class="tok-fn">sha256</span>(<span class="tok-cls">String</span> s) { <span class="tok-com">/* MessageDigest SHA-256 → hex */</span> }
+}</code></pre>
+        </div>
+        <div class="java-rule"><strong>Lưu hash của refresh token, không lưu token gốc</strong> — giống mật khẩu: lộ DB không đồng nghĩa lộ phiên đăng nhập. Dùng SHA-256 là đủ (token là chuỗi ngẫu nhiên 256 bit, không cần hash chậm như mật khẩu do con người đặt). Và dùng <code>SecureRandom</code>, <strong>không</strong> dùng <code>Random</code>/<code>UUID</code> đơn thuần cho token nhạy cảm.</div>
+
+        <h3 id="logout">5.1. Đăng xuất</h3>
+
+        <p><code>POST /api/auth/logout</code> {refreshToken} ⇒ đánh dấu <code>revoked</code> cả family; client xoá token cục bộ. Access token còn sống đến khi hết hạn (tối đa 15 phút) — mục 6 giải quyết nếu cần chặt hơn.</p>
+
+        <h2 id="thu-hoi">6. Thu hồi access token — điểm yếu cố hữu của JWT</h2>
+
+        <p>JWT tự chứa nên server <strong>không tra gì</strong> khi kiểm tra — đó là ưu điểm <em>và</em> là nhược điểm: không có chỗ nào để nói "token này không còn giá trị". Các chiến lược, theo độ chặt tăng dần:</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Chiến lược</th><th>Cách làm</th><th>Đánh đổi</th></tr></thead>
+            <tbody>
+              <tr><td><strong>TTL rất ngắn</strong></td><td>Access token 5-15 phút</td><td>Chấp nhận cửa sổ rủi ro nhỏ; <strong>đủ cho hầu hết ứng dụng</strong></td></tr>
+              <tr><td><strong>Phiên bản token của user</strong></td><td>Claim <code>ver</code>; DB có <code>users.token_version</code>; đổi mật khẩu/khoá tài khoản ⇒ tăng ver ⇒ token cũ bị từ chối</td><td>Thêm 1 lần tra (có thể cache)</td></tr>
+              <tr><td>**Denylist <code>jti</code>**</td><td>Khi logout/khoá, lưu <code>jti</code> vào Redis với TTL = thời gian còn lại của token; filter kiểm tra</td><td>Mất tính stateless; cần Redis</td></tr>
+              <tr><td><strong>Token opaque + introspection</strong></td><td>Token không phải JWT; resource server hỏi IdP "token này còn hợp lệ không?"</td><td>Mỗi request tốn một lần gọi; thu hồi tức thì</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout callout-note">
+          <div class="callout-label">📌 Tình huống thực tế</div>
+          <p>Người dùng đổi mật khẩu / bị admin khoá / bị nghi lộ tài khoản — bạn muốn đá họ ra <strong>ngay</strong>, không đợi 15 phút. Thường chọn *TTL ngắn + <code>token_version</code>*: đơn giản, không cần Redis. Hệ thống tài chính/y tế thường thêm denylist.</p>
+        </div>
+
+        <h2 id="luu-token">7. Frontend lưu token ở đâu?</h2>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Nơi lưu</th><th>Rủi ro</th><th>Nhận xét</th></tr></thead>
+            <tbody>
+              <tr><td><code>localStorage</code></td><td><strong>XSS</strong> đọc được ngay (<code>localStorage.getItem</code>)</td><td>Phổ biến nhưng dễ bị trộm nếu có một lỗ XSS</td></tr>
+              <tr><td>Bộ nhớ JS (biến) cho <strong>access token</strong></td><td>Mất khi tải lại trang; XSS vẫn có thể gọi API <em>trong phiên</em></td><td>An toàn hơn localStorage — kết hợp với refresh để khôi phục</td></tr>
+              <tr><td>**Cookie <code>HttpOnly; Secure; SameSite=Strict/Lax</code><strong> cho </strong>refresh token**</td><td>JS không đọc được ⇒ XSS không <em>lấy cắp</em> được; cần xem xét CSRF cho endpoint <code>/refresh</code></td><td><strong>Khuyến nghị</strong>: refresh trong cookie HttpOnly, access trong bộ nhớ</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="java-rule"><strong>Không có nơi lưu "hoàn hảo" cho token trong trình duyệt</strong> — nếu kẻ tấn công chạy được JS trên trang của bạn (XSS), cuộc chơi đã khó. Phòng thủ gốc: chống XSS (CSP, escape đầu ra, không <code>innerHTML</code> với dữ liệu người dùng). Mobile app: dùng Keychain/Keystore.</div>
+
+        <h2 id="loi-jwt">8. Những lỗi JWT kinh điển</h2>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Lỗi</th><th>Hậu quả</th><th>Cách đúng</th></tr></thead>
+            <tbody>
+              <tr><td>Secret yếu / ngắn / commit vào Git (<code>secret</code>, <code>changeme</code>)</td><td>Ai đoán được secret <strong>tự ký token ADMIN</strong></td><td>≥ 32 byte ngẫu nhiên, từ biến môi trường/secret manager; xoay khoá định kỳ</td></tr>
+              <tr><td>Không đặt <code>exp</code> (token vĩnh viễn)</td><td>Token lộ = lộ mãi mãi</td><td>Luôn có <code>exp</code>; Spring mặc định kiểm <code>exp</code> + clock skew 60s</td></tr>
+              <tr><td>Không kiểm <code>iss</code>/<code>aud</code></td><td>Token từ hệ thống khác (cùng khoá) được chấp nhận</td><td><code>JwtValidators.createDefaultWithIssuer(...)</code> + kiểm <code>aud</code></td></tr>
+              <tr><td>Chấp nhận <code>alg: none</code> hoặc để client chọn thuật toán</td><td>Giả mạo token không chữ ký / nhầm HS↔RS</td><td>Ép thuật toán cố định phía server (như <code>macAlgorithm(HS256)</code>)</td></tr>
+              <tr><td>Nhét dữ liệu nhạy cảm/to vào payload</td><td>Lộ dữ liệu; header HTTP phình</td><td>Chỉ <code>sub</code>, vài claim cần thiết; tra thông tin còn lại bằng id</td></tr>
+              <tr><td>Tin dữ liệu quyền trong token mãi</td><td>Quyền đã đổi nhưng token cũ vẫn mang quyền cũ</td><td>TTL ngắn; hoặc <code>token_version</code></td></tr>
+              <tr><td>Access token sống nhiều giờ/ngày</td><td>Cửa sổ tấn công dài</td><td>Access ngắn + refresh có rotation</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="oauth2">9. OAuth2 và OpenID Connect — bức tranh lớn</h2>
+
+        <p>Cái bạn vừa xây là <em>hệ xác thực tự quản</em>. Nhưng khi người dùng bấm <strong>"Đăng nhập bằng Google"</strong>, hoặc công ty có <strong>SSO</strong> nội bộ, ta bước vào <strong>OAuth 2.0</strong> (uỷ quyền) và <strong>OpenID Connect – OIDC</strong> (xác thực, xây trên OAuth2). Bốn vai:</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Vai</th><th>Là ai</th><th>Ví dụ</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Resource Owner</strong></td><td>Người dùng sở hữu dữ liệu</td><td>Bạn</td></tr>
+              <tr><td><strong>Client</strong></td><td>Ứng dụng muốn truy cập thay mặt người dùng</td><td>Web shop của bạn (React + Spring)</td></tr>
+              <tr><td><strong>Authorization Server</strong> (IdP)</td><td>Xác thực người dùng, phát token</td><td>Google, Keycloak, Auth0, Azure AD, AWS Cognito</td></tr>
+              <tr><td><strong>Resource Server</strong></td><td>API bảo vệ bằng token</td><td><strong>API Spring của bạn</strong> — đúng thứ ta vừa cấu hình</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 id="pkce">9.1. Authorization Code + PKCE — luồng chuẩn cho SPA/mobile</h3>
+
+        <div class="jvm-flow">
+          <div class="stages">
+            <div class="stage"><div class="stage-title">1. Client tạo PKCE</div><div class="stage-content">Sinh <code>code_verifier</code> ngẫu nhiên; <code>code_challenge = SHA256(verifier)</code></div></div>
+            <div class="stage blue"><div class="stage-title">2. Chuyển hướng</div><div class="stage-content">Tới IdP <code>/authorize?…&amp;code_challenge=…</code> — người dùng đăng nhập <strong>tại IdP</strong>, không phải ở app bạn</div></div>
+            <div class="stage"><div class="stage-title">3. Đồng ý</div><div class="stage-content">Người dùng chấp thuận quyền (scope)</div></div>
+            <div class="stage blue"><div class="stage-title">4. Trả <code>code</code></div><div class="stage-content">IdP chuyển về <code>redirect_uri</code> kèm <code>code</code> dùng một lần</div></div>
+            <div class="stage"><div class="stage-title">5. Đổi token</div><div class="stage-content">Client gửi <code>code</code> + <code>code_verifier</code> tới <code>/token</code></div></div>
+            <div class="stage blue"><div class="stage-title">6. Nhận token</div><div class="stage-content"><code>access_token</code> (+ <code>id_token</code> OIDC, + <code>refresh_token</code>)</div></div>
+            <div class="stage"><div class="stage-title">7. Gọi API</div><div class="stage-content"><code>Authorization: Bearer access_token</code> → Resource Server kiểm bằng khoá công khai của IdP</div></div>
+          </div>
+          <div class="caption">PKCE chặn kẻ chặn được <code>code</code>: không có <code>code_verifier</code> thì không đổi được token.</div>
+        </div>
+        <div class="callout callout-warning">
+          <div class="callout-label">⚠️ Đừng dùng Implicit / Password grant</div>
+          <p><em>Implicit</em> (token trả trong URL) đã bị khai tử; <em>Resource Owner Password Credentials</em> (ứng dụng nhận mật khẩu của người dùng rồi đem tới IdP) đã bị OAuth 2.1 loại bỏ. Luôn <strong>Authorization Code + PKCE</strong>.</p>
+        </div>
+
+        <h3 id="resource-idp">9.2. API của bạn làm Resource Server cho IdP ngoài</h3>
+
+        <p>Nếu giao việc đăng nhập cho <strong>Keycloak/Auth0/Google</strong>, API Spring không cần tự phát token nữa — chỉ cần <em>tin</em> IdP. Chỉ một dòng cấu hình: Spring tải tập khoá công khai (<strong>JWKS</strong>) từ IdP và tự kiểm chữ ký, <code>iss</code>, <code>exp</code>:</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>application.yml</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-cls">spring</span>:
+  <span class="tok-cls">security</span>:
+    <span class="tok-cls">oauth2</span>:
+      <span class="tok-cls">resourceserver</span>:
+        <span class="tok-cls">jwt</span>:
+          <span class="tok-cls">issuer-uri</span>: https://keycloak.example.com/realms/shop<span class="tok-com">     # tự đọc /.well-known/openid-configuration → jwks_uri</span></code></pre>
+        </div>
+        <p>Phần còn lại của <code>SecurityFilterChain</code> (<code>oauth2ResourceServer(jwt)</code>) <strong>giữ nguyên</strong> — đây là lý do ta chọn Resource Server ở mục 4: chuyển từ "tự phát token" sang "IdP phát token" chỉ là đổi nguồn khoá. Cần ánh xạ <code>realm_access.roles</code> (Keycloak) sang authority thì tuỳ biến <code>JwtAuthenticationConverter</code>.</p>
+
+        <h3 id="social-login">9.3. "Đăng nhập bằng Google" cho ứng dụng web server-side</h3>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>application.yml</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-cls">spring</span>:
+  <span class="tok-cls">security</span>:
+    <span class="tok-cls">oauth2</span>:
+      <span class="tok-cls">client</span>:
+        <span class="tok-cls">registration</span>:
+          <span class="tok-cls">google</span>:
+            <span class="tok-cls">client-id</span>: ${GOOGLE_CLIENT_ID}
+            <span class="tok-cls">client-secret</span>: ${GOOGLE_CLIENT_SECRET}
+            <span class="tok-cls">scope</span>: openid, profile, email</code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>SecurityConfig.java</span><button class="copy-btn">Copy</button></div>
+<pre><code>http.<span class="tok-fn">authorizeHttpRequests</span>(a -&gt; a.<span class="tok-fn">anyRequest</span>().<span class="tok-fn">authenticated</span>())
+    .<span class="tok-fn">oauth2Login</span>(<span class="tok-cls">Customizer</span>.<span class="tok-fn">withDefaults</span>());       <span class="tok-com">// thêm spring-boot-starter-oauth2-client</span>
+<span class="tok-com">// Trang /login tự có nút "Google"; sau khi đăng nhập, @AuthenticationPrincipal OidcUser có email, name, picture.</span></code></pre>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Khi nào</th><th>Chọn</th></tr></thead>
+            <tbody>
+              <tr><td>Ứng dụng nhỏ, tự quản người dùng, ít tích hợp</td><td><strong>Tự phát JWT</strong> (mục 4-5)</td></tr>
+              <tr><td>Cần SSO, MFA, social login, quản trị người dùng đầy đủ</td><td><strong>IdP</strong> (Keycloak tự host / Auth0 / Cognito) — đừng tự viết những thứ này</td></tr>
+              <tr><td>Nhiều microservice</td><td>IdP + mỗi service là <strong>Resource Server</strong> (RS256, JWKS)</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="cheat-sheet">10. Cheat sheet chương 10</h2>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Cần gì</th><th>Làm gì</th></tr></thead>
+            <tbody>
+              <tr><td>Token cho SPA/mobile/microservice</td><td>JWT access (5-15 phút) + refresh opaque (có rotation)</td></tr>
+              <tr><td>Ký &amp; kiểm JWT trong Spring</td><td><code>NimbusJwtEncoder</code>/<code>NimbusJwtDecoder</code> + <code>oauth2ResourceServer(jwt)</code></td></tr>
+              <tr><td>Role từ claim</td><td><code>JwtGrantedAuthoritiesConverter</code> (claim name + prefix)</td></tr>
+              <tr><td>Refresh token</td><td>Ngẫu nhiên 256 bit; lưu <strong>hash</strong>; rotation; phát hiện tái sử dụng → thu hồi family</td></tr>
+              <tr><td>Thu hồi sớm</td><td>TTL ngắn + <code>token_version</code> (hoặc denylist <code>jti</code>)</td></tr>
+              <tr><td>Lưu ở trình duyệt</td><td>Access: bộ nhớ; refresh: cookie <code>HttpOnly; Secure; SameSite</code></td></tr>
+              <tr><td>Đăng nhập Google/SSO</td><td>OIDC — Authorization Code + PKCE; API = Resource Server (<code>issuer-uri</code>)</td></tr>
+              <tr><td>Đừng</td><td>Secret yếu · không <code>exp</code> · dữ liệu nhạy cảm trong payload · Implicit/Password grant</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="bai-tap">Bài tập</h2>
+
+        <div class="exercises">
+
+          <div class="exercise">
+            <h4>Đăng nhập → JWT</h4>
+            <div class="exercise-body">
+              <p>Dựa trên chương 9, cài <code>POST /api/auth/login</code>, <code>TokenService</code>, và chuyển <code>SecurityFilterChain</code> sang <code>oauth2ResourceServer</code>.</p>
+              <ul>
+                <li>Giải mã payload bằng <code>base64 -d</code> (hoặc jwt.io) — liệt kê các claim.</li>
+                <li>Sửa một ký tự trong payload rồi gửi lại: mã trả về? Vì sao?</li>
+                <li>Đợi token hết hạn (đặt TTL 30 giây để thử): mã trả về?</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Sửa payload ⇒ chữ ký không còn khớp ⇒ 401 (<code>Invalid signature</code>). Hết hạn ⇒ 401 (<code>Jwt expired</code>). Đó là hai lớp bảo vệ mà <code>NimbusJwtDecoder</code> làm sẵn.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Thợ săn secret yếu</h4>
+            <div class="exercise-body">
+              <p>Tạo token HS256 bằng secret <code>secret123</code>. Dùng <code>hashcat -m 16500</code> hoặc script Python thử từ điển để dò lại secret.</p>
+              <ul>
+                <li>Dò được trong bao lâu? Từ đó tự ký token có <code>roles: ["ADMIN"]</code> và gọi <code>/api/admin/…</code> (trên môi trường <em>của bạn</em>).</li>
+                <li>Sinh secret đúng: <code>openssl rand -base64 48</code>. Nâng <code>JwtConfig</code> để từ chối secret &lt; 32 byte (đã có trong mục 4).</li>
+                <li>Giải thích vì sao RS256 không có kịch bản này ở các dịch vụ chỉ <em>kiểm</em> token.</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>HS256: ai có secret đều <em>ký</em> được. RS256: dịch vụ chỉ cầm khoá <strong>công khai</strong> — có kiểm được nhưng không thể ký. Đó là lý do hệ thống nhiều dịch vụ dùng bất đối xứng. Chỉ thực hành trên hệ thống của chính bạn.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Refresh token rotation</h4>
+            <div class="exercise-body">
+              <p>Cài <code>POST /api/auth/refresh</code> theo mục 5.</p>
+              <ul>
+                <li>Đăng nhập, lấy <code>R1</code>. Gọi refresh với <code>R1</code> → nhận <code>R2</code>. Gọi lại với <code>R1</code> — chuyện gì xảy ra? <code>R2</code> còn dùng được không?</li>
+                <li>Viết test mô phỏng "kẻ cắp dùng R1 sau khi người dùng thật đã đổi sang R2".</li>
+                <li>Vì sao <code>rotate</code> có <code>noRollbackFor = TokenReuseException.class</code>?</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Dùng lại <code>R1</code> ⇒ <code>TokenReuseException</code> ⇒ cả family bị <code>revoked</code> ⇒ <code>R2</code> cũng chết (người dùng thật phải đăng nhập lại — chấp nhận để chặn kẻ cắp). Nếu không <code>noRollbackFor</code>, ném exception sẽ rollback luôn lệnh <code>revokeFamily</code> ⇒ việc thu hồi biến mất!</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Đá người dùng ra ngay</h4>
+            <div class="exercise-body">
+              <p>Khi admin khoá <code>userX</code>, access token đang sống của họ phải <strong>vô hiệu trong ≤ 1 giây</strong>.</p>
+              <ul>
+                <li>Cài <code>token_version</code> (claim <code>ver</code>) và <code>OAuth2TokenValidator</code> so với DB.</li>
+                <li>Đo chi phí thêm một lần tra/request; thêm cache 30 giây (Caffeine). Đánh đổi gì?</li>
+                <li>So với denylist <code>jti</code> trên Redis: khi nào chọn cái nào?</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Validator tuỳ biến thêm vào <code>DelegatingOAuth2TokenValidator</code>. Cache 30 giây ⇒ cửa sổ thu hồi tối đa 30 giây — chấp nhận được? Muốn tức thì: Redis denylist/<code>pub-sub</code> xoá cache.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Resource Server cho Keycloak</h4>
+            <div class="exercise-body">
+              <p>Chạy Keycloak bằng Docker (<code>quay.io/keycloak/keycloak start-dev</code>), tạo realm <code>shop</code>, client công khai, một user. Lấy token qua Authorization Code (hoặc <code>Direct Access Grants</code> chỉ để thử).</p>
+              <ul>
+                <li>Cấu hình API chỉ bằng <code>issuer-uri</code>.</li>
+                <li>Gọi API bằng token của Keycloak — thành công?</li>
+                <li>Role nằm ở <code>realm_access.roles</code>: viết <code>JwtAuthenticationConverter</code> ánh xạ sang <code>ROLE_*</code>.</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Spring tự lấy JWKS từ <code>${issuer-uri}/.well-known/openid-configuration</code>. Converter: đọc <code>jwt.getClaimAsMap("realm_access").get("roles")</code> rồi map thành <code>SimpleGrantedAuthority("ROLE_" + r)</code>.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+        </div>
+
+        <h2 id="quiz">Quiz</h2>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q1</span>
+            <div class="quiz-q-text"><p>JWT gồm những phần nào? Nó được mã hoá hay chỉ được ký?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Ba phần Base64URL: <strong>header</strong> (thuật toán), <strong>payload</strong> (claims), <strong>signature</strong>. Chỉ được <strong>ký</strong> — ai cầm cũng đọc được payload. Chữ ký đảm bảo toàn vẹn và xuất xứ, không đảm bảo bí mật ⇒ không đặt dữ liệu nhạy cảm vào payload.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q2</span>
+            <div class="quiz-q-text"><p>Vì sao cần cả access token và refresh token?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Access token <strong>ngắn hạn</strong> và stateless ⇒ nếu bị lộ, thiệt hại giới hạn trong vài phút, và API kiểm rất nhanh. Refresh token <strong>dài hạn nhưng do server kiểm soát</strong> (lưu hash, thu hồi, rotation) giúp người dùng không phải đăng nhập lại liên tục. Hai loại kết hợp cho cả an toàn lẫn trải nghiệm.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q3</span>
+            <div class="quiz-q-text"><p>Refresh token rotation là gì và "phát hiện tái sử dụng" hoạt động ra sao?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Mỗi lần đổi refresh token, server phát <strong>cặp mới</strong> và đánh dấu token cũ đã dùng. Nếu token <em>đã dùng</em> lại xuất hiện ⇒ có bản sao (bị đánh cắp) ⇒ server <strong>thu hồi cả họ (family)</strong> token đó, buộc đăng nhập lại.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q4</span>
+            <div class="quiz-q-text"><p>JWT khó thu hồi — có những cách xử lý nào?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <ul>
+                <li>TTL access token rất ngắn (thường đủ).</li>
+                <li><code>token_version</code> của user kiểm lúc xác thực.</li>
+                <li>Denylist <code>jti</code> (Redis, TTL = thời gian còn lại).</li>
+                <li>Token opaque + introspection (đánh đổi: mỗi request một lần gọi IdP).</li>
+              </ul>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q5</span>
+            <div class="quiz-q-text"><p>HS256 và RS256 khác nhau ra sao? Khi nào dùng RS256?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>HS256 dùng <strong>một khoá bí mật chung</strong> — ai kiểm được cũng ký được. RS256 dùng <strong>khoá riêng để ký, khoá công khai để kiểm</strong> — dịch vụ chỉ cần khoá công khai (JWKS), không thể giả mạo token. Dùng RS256/ES256 khi có <strong>nhiều dịch vụ</strong> hoặc IdP bên ngoài.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q6</span>
+            <div class="quiz-q-text"><p>Authorization Code + PKCE giải quyết gì? Vì sao không dùng Implicit?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Cho SPA/mobile (client không giữ được bí mật) đổi <code>code</code> lấy token an toàn: PKCE gắn <code>code</code> với <code>code_verifier</code> chỉ client gốc biết ⇒ kẻ chặn <code>code</code> vô dụng. Implicit trả token ngay trên URL (lộ qua lịch sử, referrer) nên đã bị loại bỏ.</p>
+            </div>
+          </details>
+        </div>
+
+        <h2 id="tong-ket">Tổng kết</h2>
+
+        <p>Sau chương 10, bạn đã nắm:</p>
+        <ul>
+          <li><strong>Session</strong> (stateful) vs <strong>token</strong> (stateless): chọn theo kiến trúc; JWT hợp SPA/mobile/microservice.</li>
+          <li><strong>JWT</strong> = header.payload.signature — <em>ký không mã hoá</em>; luôn có <code>exp</code>, kiểm <code>iss</code>/<code>aud</code>, ép thuật toán phía server.</li>
+          <li>Dùng <strong>Spring OAuth2 Resource Server</strong> (<code>NimbusJwtEncoder</code>/<code>Decoder</code>, <code>JwtAuthenticationConverter</code>) thay vì tự viết filter.</li>
+          <li><strong>Access token ngắn</strong> + <strong>refresh token opaque, lưu hash, rotation + phát hiện tái sử dụng</strong>.</li>
+          <li><strong>Thu hồi</strong>: TTL ngắn + <code>token_version</code>, hoặc denylist <code>jti</code>; <strong>lưu ở trình duyệt</strong>: access trong bộ nhớ, refresh trong cookie <code>HttpOnly</code>.</li>
+          <li><strong>OAuth2/OIDC</strong>: Authorization Code + PKCE; API của bạn là <strong>Resource Server</strong>; <code>issuer-uri</code> để dùng Keycloak/Auth0/Google; không tự viết SSO/MFA.</li>
+        </ul>
+
+        <h2 id="ket-noi">Kết nối</h2>
+        <ul>
+          <li><strong>Chương 9</strong> — chuỗi filter, <code>UserDetailsService</code>, <code>AuthenticationManager</code>, <code>AuthenticationEntryPoint</code> mà chương này tái sử dụng.</li>
+          <li><strong>Chương 3</strong> — <code>AppProperties.jwt</code> (secret, TTL) là ví dụ chuẩn của <code>@ConfigurationProperties</code> + fail fast.</li>
+          <li><strong>Chương 11</strong> — test với <code>jwt()</code> post-processor của <code>spring-security-test</code>; test rotation/reuse.</li>
+          <li><strong>Chương 12</strong> — Redis cho denylist <code>jti</code>, rate limit đăng nhập.</li>
+          <li><strong>Chương 13</strong> — mỗi microservice là Resource Server; API Gateway truyền/kiểm token.</li>
+          <li><strong>Networking chương 6 &amp; 9</strong> — TLS, cookie, JWT, OAuth: nền tảng lý thuyết.</li>
+          <li><strong>Fullstack-ContactCenter C4 &amp; E5</strong> — JWT/RBAC trong NestJS; <strong>G4</strong> — frontend lưu và gắn token vào request.</li>
+        </ul>
+
+        <nav class="chapter-nav">
+          <a href="chuong9.html" class="prev">
+            <div class="dir">← Chương 9</div>
+            <div class="label">Spring Security</div>
+          </a>
+          <a href="chuong11.html" class="next">
+            <div class="dir">Chương 11 →</div>
+            <div class="label">Kiểm thử</div>
+          </a>
+        </nav>
+
+      </main>
+
+      <aside class="toc">
+        <div class="toc-label">Trong chương này</div>
+        <ul>
+          <li><a href="#session-vs-token">1. Session hay token?</a></li>
+          <li><a href="#jwt">2. JWT — cấu trúc và bản chất</a></li>
+          <li><a href="#luong">3. Luồng đăng nhập với access + refresh token</a></li>
+          <li><a href="#cai-dat">4. Cài đặt với Spring OAuth2 Resource Server</a></li>
+          <li class="level-3"><a href="#phat-token">4.1. Phát token khi đăng nhập</a></li>
+          <li><a href="#refresh">5. Refresh token và rotation</a></li>
+          <li class="level-3"><a href="#logout">5.1. Đăng xuất</a></li>
+          <li><a href="#thu-hoi">6. Thu hồi access token — điểm yếu cố hữu của JWT</a></li>
+          <li><a href="#luu-token">7. Frontend lưu token ở đâu?</a></li>
+          <li><a href="#loi-jwt">8. Những lỗi JWT kinh điển</a></li>
+          <li><a href="#oauth2">9. OAuth2 và OpenID Connect — bức tranh lớn</a></li>
+          <li class="level-3"><a href="#pkce">9.1. Authorization Code + PKCE — luồng chuẩn cho SPA/mobile</a></li>
+          <li class="level-3"><a href="#resource-idp">9.2. API của bạn làm Resource Server cho IdP ngoài</a></li>
+          <li class="level-3"><a href="#social-login">9.3. "Đăng nhập bằng Google" cho ứng dụng web server-side</a></li>
+          <li><a href="#cheat-sheet">10. Cheat sheet chương 10</a></li>
+          <li><a href="#bai-tap">Bài tập</a></li>
+          <li><a href="#quiz">Quiz</a></li>
+          <li><a href="#tong-ket">Tổng kết</a></li>
+          <li><a href="#ket-noi">Kết nối</a></li>
+        </ul>
+      </aside>
+
+    </div>
+  </div>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p>
+        Chương 10 — JWT &amp;amp; OAuth2 · Spring Boot sub-pillar · Pillar 9 IT Basic<br/>
+        <a href="chuong9.html">← Chương 9</a> · <a href="../index.html">Spring Boot TOC</a> · <a href="chuong11.html">Chương 11 →</a>
+      </p>
+    </div>
+  </footer>
+
+  <script src="../../shared/js/chapter.js"></script>
+</body>
+</html>

@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chương 8 — Kiến trúc tầng, DTO &amp; OpenAPI — code lớn mà không rối · Spring Boot Sub-pillar</title>
+  <meta name="description" content="Layered architecture và package-by-feature, DTO với record và MapStruct, thiết kế service, quy ước thiết kế API (phân trang, version, idempotency), tài liệu OpenAPI/Swagger bằng springdoc, và kiểm tra kiến trúc với ArchUnit." />
+  <meta name="theme-color" content="#4a9a28" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Bitter:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="../../shared/css/base.css">
+  <link rel="stylesheet" href="../css/theme.css">
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="container">
+      <a class="site-logo" href="../../../index.html">
+        <span class="mark mark-spring">Sb</span>
+        Spring Boot · IT Basic
+      </a>
+      <nav>
+        <ul class="site-nav">
+          <li><a href="../../../index.html">IT Basic</a></li>
+          <li><a href="../../index.html">Pillar 9</a></li>
+          <li><a href="../../Java/index.html">Java</a></li>
+          <li><a href="../index.html" class="active">Spring Boot</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <div class="container">
+    <header class="chapter-header">
+      <div class="breadcrumb">
+        <a href="../../../index.html">IT Basic</a><span class="sep">/</span>
+        <a href="../../index.html">Pillar 9</a><span class="sep">/</span>
+        <a href="../index.html">Spring Boot</a><span class="sep">/</span>
+        <span>Chương 8</span>
+      </div>
+      <div class="chapter-num">Chương 08 · Kiến trúc &amp; API</div>
+      <h1 style="font-size: 2.6rem; margin: 0 0 12px; color: var(--ink);">
+        Kiến trúc tầng, DTO &amp; OpenAPI — code lớn mà không rối
+      </h1>
+      <p class="lead">
+        Sáu chương đầu cho bạn đủ công cụ để viết một API chạy được. Chương này trả lời câu hỏi khác: <strong>làm sao để nó vẫn dễ sửa khi có 50 endpoint và 5 người cùng làm?</strong> Đó là chuyện <em>ranh giới</em>: mỗi lớp chịu trách nhiệm gì, dữ liệu đi qua ranh giới dưới dạng nào (<strong>DTO</strong>), và hợp đồng giữa backend với frontend được ghi ở đâu (<strong>OpenAPI</strong>).
+      </p>
+      <div class="chapter-meta">
+        <span class="item"><strong>Bài tập:</strong> 5</span>
+        <span class="item"><strong>Quiz:</strong> 6</span>
+        <span class="item"><strong>Prerequisites:</strong> Chương 1-7</span>
+      </div>
+    </header>
+
+    <div class="layout">
+
+      <main class="prose">
+
+        <div class="callout callout-goal">
+          <div class="callout-label">🎯 Mục tiêu chương</div>
+          <ul>
+            <li>Phân chia trách nhiệm <strong>controller / service / repository</strong> và hướng phụ thuộc đúng.</li>
+            <li>Chọn cách tổ chức package: <strong>theo tầng</strong> hay <strong>theo tính năng</strong> (khuyến nghị).</li>
+            <li>Thiết kế <strong>DTO</strong> (request/response) bằng <code>record</code> và ánh xạ bằng <strong>MapStruct</strong>.</li>
+            <li>Quyết định logic nằm ở <strong>entity</strong> hay <strong>service</strong>; ranh giới transaction.</li>
+            <li>Áp dụng <strong>quy ước thiết kế API</strong>: tên tài nguyên, lọc/sắp xếp/phân trang, versioning, idempotency.</li>
+            <li>Tự sinh tài liệu <strong>OpenAPI/Swagger UI</strong> bằng <code>springdoc</code> và biết dùng nó như hợp đồng với frontend.</li>
+            <li>Bảo vệ kiến trúc bằng test với <strong>ArchUnit</strong>.</li>
+          </ul>
+        </div>
+
+        <h2 id="layered">1. Kiến trúc phân tầng (layered)</h2>
+
+        <div class="jvm-flow">
+          <div class="stages">
+            <div class="stage"><div class="stage-title">Controller</div><div class="stage-content">HTTP: nhận request, validate, gọi service, trả response/mã trạng thái</div></div>
+            <div class="stage blue"><div class="stage-title">Service</div><div class="stage-content"><strong>Nghiệp vụ</strong>: quy tắc, điều phối, ranh giới <code>@Transactional</code></div></div>
+            <div class="stage"><div class="stage-title">Repository</div><div class="stage-content">Truy cập dữ liệu: JPA/SQL, không có nghiệp vụ</div></div>
+            <div class="stage blue"><div class="stage-title">Database</div><div class="stage-content">Lưu trữ</div></div>
+          </div>
+          <div class="caption">Phụ thuộc đi <strong>một chiều từ trên xuống</strong>: Controller → Service → Repository. Tầng dưới không biết tầng trên tồn tại.</div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Tầng</th><th>Được làm</th><th>Không được làm</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Controller</strong></td><td>Đọc request, <code>@Valid</code>, gọi <strong>một</strong> method service, ánh xạ kết quả → response + mã HTTP</td><td>Chứa nghiệp vụ; gọi thẳng repository; mở transaction; trả entity</td></tr>
+              <tr><td><strong>Service</strong></td><td>Quy tắc nghiệp vụ, phối hợp nhiều repository, <code>@Transactional</code>, ném exception nghiệp vụ</td><td>Biết <code>HttpServletRequest</code>/<code>ResponseEntity</code>/mã HTTP; trả entity ra ngoài (trả DTO)</td></tr>
+              <tr><td><strong>Repository</strong></td><td>Truy vấn, lưu, xoá</td><td>Chứa nghiệp vụ; gọi service</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout callout-gotcha">
+          <div class="callout-label">⚠️ Ba mùi code kinh điển</div>
+          <p><strong>Fat controller</strong>: 80 dòng <code>if/else</code> nghiệp vụ trong controller — không tái dùng, không test được nếu không dựng web. <strong>God service</strong>: một <code>UserService</code> 2.000 dòng làm mọi thứ liên quan đến user — tách theo use case/khả năng. <strong>Anemic pass-through</strong>: service chỉ gọi <code>repo.findById()</code> rồi trả lại — chấp nhận được lúc đầu, nhưng đừng bịa lớp "cho đủ tầng" nếu nó không thêm giá trị.</p>
+        </div>
+
+        <h2 id="package">2. Tổ chức package: theo tầng hay theo tính năng?</h2>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>Hai cách tổ chức</span><button class="copy-btn">Copy</button></div>
+<pre><code># (A) Package-by-layer — nhìn quen, nhưng mọi thứ của một tính năng rải khắp nơi
+vn.itbasic.shop
+├── controller   OrderController, ProductController, UserController ...
+├── service      OrderService, ProductService, UserService ...
+├── repository   OrderRepository, ProductRepository ...
+├── dto          OrderRequest, OrderResponse, ProductRequest ...
+└── entity       Order, OrderItem, Product, User ...
+
+# (B) Package-by-feature — mọi thứ về "order" nằm cùng nhau
+vn.itbasic.shop
+├── order
+│   ├── OrderController
+│   ├── OrderService
+│   ├── OrderRepository
+│   ├── Order, OrderItem            (entity)
+│   ├── OrderRequest, OrderResponse (DTO)
+│   └── OrderMapper
+├── product        ...
+├── user           ...
+└── common         (exception, cấu hình chung, tiện ích thật sự dùng chung)</code></pre>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th></th><th>Theo tầng (A)</th><th>Theo tính năng (B)</th></tr></thead>
+            <tbody>
+              <tr><td>Tìm code của một tính năng</td><td>Nhảy qua 5 package</td><td>Một package</td></tr>
+              <tr><td>Độ kết dính</td><td>Thấp (các lớp không liên quan chung package)</td><td><strong>Cao</strong></td></tr>
+              <tr><td>Che giấu (package-private)</td><td>Không được — mọi thứ phải <code>public</code> để tầng khác thấy</td><td><strong>Được</strong>: chỉ <code>OrderService</code> &amp; DTO là <code>public</code>, repository/entity có thể package-private</td></tr>
+              <tr><td>Tách microservice sau này</td><td>Khó</td><td>Dễ: mỗi package là ứng cử viên</td></tr>
+              <tr><td>Phù hợp</td><td>Dự án nhỏ, người mới</td><td><strong>Dự án vừa trở lên</strong> (khuyến nghị)</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="java-rule"><strong>Mặc định: package-by-feature.</strong> Nó biến ranh giới giữa các tính năng thành ranh giới của package — và khi đó bạn có thể dùng <code>package-private</code> để cấm tính năng này chọc vào ruột tính năng kia. (Nếu cần, mỗi feature vẫn có thể chia thêm <code>web/</code>, <code>domain/</code>, <code>persistence/</code> bên trong.)</div>
+
+        <h2 id="dto">3. DTO — hợp đồng tách khỏi mô hình dữ liệu</h2>
+
+        <p><strong>DTO (Data Transfer Object)</strong> là đối tượng chỉ để mang dữ liệu qua ranh giới. Ba lý do không trả entity ra ngoài:</p>
+        <ul>
+          <li><strong>Bảo mật/mass assignment</strong>: client không nên ghi được <code>id</code>, <code>role</code>, <code>version</code>, <code>createdAt</code> (chương 4); và không nên đọc được <code>passwordHash</code>, <code>internalNote</code>.</li>
+          <li><strong>Ổn định hợp đồng</strong>: đổi tên cột hoặc tách bảng không được làm vỡ API; DTO là lớp đệm.</li>
+          <li><strong>Tránh lỗi JPA</strong>: serialize entity kích hoạt lazy loading, vòng lặp <code>Order ↔ OrderItem</code>, <code>LazyInitializationException</code> (chương 7).</li>
+        </ul>
+        <div class="code-wrap">
+          <div class="code-meta"><span>DTO bằng record — mỗi use case một hợp đồng</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-kw">public</span> <span class="tok-kw">record</span> <span class="tok-cls">CreateOrderRequest</span>(
+        <span class="tok-ann">@NotNull</span> <span class="tok-cls">Long</span> customerId,
+        <span class="tok-ann">@NotEmpty</span> <span class="tok-ann">@Valid</span> <span class="tok-cls">List</span>&lt;<span class="tok-cls">Line</span>&gt; lines) {
+
+    <span class="tok-kw">public</span> <span class="tok-kw">record</span> <span class="tok-cls">Line</span>(<span class="tok-ann">@NotNull</span> <span class="tok-cls">Long</span> productId, <span class="tok-ann">@Positive</span> <span class="tok-kw">int</span> quantity) { }
+}
+
+<span class="tok-kw">public</span> <span class="tok-kw">record</span> <span class="tok-cls">OrderResponse</span>(
+        <span class="tok-cls">Long</span> id,
+        <span class="tok-cls">String</span> status,
+        <span class="tok-cls">BigDecimal</span> total,
+        <span class="tok-cls">Instant</span> createdAt,
+        <span class="tok-cls">List</span>&lt;<span class="tok-cls">LineResponse</span>&gt; lines) {
+
+    <span class="tok-kw">public</span> <span class="tok-kw">record</span> <span class="tok-cls">LineResponse</span>(<span class="tok-cls">Long</span> productId, <span class="tok-cls">String</span> productName, <span class="tok-kw">int</span> quantity, <span class="tok-cls">BigDecimal</span> unitPrice) { }
+}</code></pre>
+        </div>
+        <div class="callout callout-tip">
+          <div class="callout-label">💡 Đặt tên: theo vai trò, không theo bảng</div>
+          <p><code>CreateOrderRequest</code>, <code>UpdateOrderRequest</code>, <code>OrderResponse</code>, <code>OrderSummary</code> (cho danh sách) — tốt hơn <code>OrderDto</code> dùng cho mọi thứ. Một DTO "vạn năng" dần chứa trường <em>tuỳ chọn tuỳ lúc</em>, mất khả năng validate chặt.</p>
+        </div>
+
+        <h3 id="mapstruct">3.1. MapStruct — ánh xạ sinh lúc biên dịch</h3>
+
+        <p>Viết tay <code>OrderResponse.from(order)</code> ổn khi ít. Với nhiều DTO lồng nhau, <strong>MapStruct</strong> sinh mã ánh xạ <strong>lúc biên dịch</strong> — nhanh như viết tay, không reflection, lỗi thiếu trường được báo ngay.</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>pom.xml</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-kw">&lt;properties</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;mapstruct.version</span><span class="tok-kw">&gt;</span>1.6.3<span class="tok-kw">&lt;/mapstruct.version</span><span class="tok-kw">&gt;</span>
+<span class="tok-kw">&lt;/properties</span><span class="tok-kw">&gt;</span>
+
+<span class="tok-kw">&lt;dependency</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;groupId</span><span class="tok-kw">&gt;</span>org.mapstruct<span class="tok-kw">&lt;/groupId</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;artifactId</span><span class="tok-kw">&gt;</span>mapstruct<span class="tok-kw">&lt;/artifactId</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;version</span><span class="tok-kw">&gt;</span>${mapstruct.version}<span class="tok-kw">&lt;/version</span><span class="tok-kw">&gt;</span>
+<span class="tok-kw">&lt;/dependency</span><span class="tok-kw">&gt;</span>
+
+<span class="tok-kw">&lt;build</span><span class="tok-kw">&gt;</span>
+  <span class="tok-kw">&lt;plugins</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;plugin</span><span class="tok-kw">&gt;</span>
+      <span class="tok-kw">&lt;groupId</span><span class="tok-kw">&gt;</span>org.apache.maven.plugins<span class="tok-kw">&lt;/groupId</span><span class="tok-kw">&gt;</span>
+      <span class="tok-kw">&lt;artifactId</span><span class="tok-kw">&gt;</span>maven-compiler-plugin<span class="tok-kw">&lt;/artifactId</span><span class="tok-kw">&gt;</span>
+      <span class="tok-kw">&lt;configuration</span><span class="tok-kw">&gt;</span>
+        <span class="tok-kw">&lt;annotationProcessorPaths</span><span class="tok-kw">&gt;</span>
+          <span class="tok-kw">&lt;path</span><span class="tok-kw">&gt;</span>
+            <span class="tok-kw">&lt;groupId</span><span class="tok-kw">&gt;</span>org.mapstruct<span class="tok-kw">&lt;/groupId</span><span class="tok-kw">&gt;</span>
+            <span class="tok-kw">&lt;artifactId</span><span class="tok-kw">&gt;</span>mapstruct-processor<span class="tok-kw">&lt;/artifactId</span><span class="tok-kw">&gt;</span>
+            <span class="tok-kw">&lt;version</span><span class="tok-kw">&gt;</span>${mapstruct.version}<span class="tok-kw">&lt;/version</span><span class="tok-kw">&gt;</span>
+          <span class="tok-kw">&lt;/path</span><span class="tok-kw">&gt;</span>
+          <span class="tok-com">&lt;!-- Nếu dùng Lombok: thêm lombok, rồi lombok-mapstruct-binding, THEO THỨ TỰ NÀY và đặt TRƯỚC mapstruct-processor --&gt;</span>
+        <span class="tok-kw">&lt;/annotationProcessorPaths</span><span class="tok-kw">&gt;</span>
+      <span class="tok-kw">&lt;/configuration</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;/plugin</span><span class="tok-kw">&gt;</span>
+  <span class="tok-kw">&lt;/plugins</span><span class="tok-kw">&gt;</span>
+<span class="tok-kw">&lt;/build</span><span class="tok-kw">&gt;</span></code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>OrderMapper.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Mapper</span>(componentModel = <span class="tok-str">"spring"</span>)                      <span class="tok-com">// sinh bean Spring → tiêm được</span>
+<span class="tok-kw">public</span> <span class="tok-kw">interface</span> <span class="tok-cls">OrderMapper</span> {
+
+    <span class="tok-ann">@Mapping</span>(target = <span class="tok-str">"total"</span>, expression = <span class="tok-str">"java(order.total())"</span>)        <span class="tok-com">// trường tính toán</span>
+    <span class="tok-ann">@Mapping</span>(target = <span class="tok-str">"status"</span>, source = <span class="tok-str">"status"</span>)                         <span class="tok-com">// enum → String tự động</span>
+    <span class="tok-cls">OrderResponse</span> <span class="tok-fn">toResponse</span>(<span class="tok-cls">Order</span> order);
+
+    <span class="tok-ann">@Mapping</span>(target = <span class="tok-str">"productName"</span>, source = <span class="tok-str">"product.name"</span>)              <span class="tok-com">// đi sâu vào quan hệ</span>
+    <span class="tok-cls">OrderResponse</span>.<span class="tok-cls">LineResponse</span> <span class="tok-fn">toLine</span>(<span class="tok-cls">OrderItem</span> item);
+
+    <span class="tok-cls">List</span>&lt;<span class="tok-cls">OrderResponse</span>&gt; <span class="tok-fn">toResponses</span>(<span class="tok-cls">List</span>&lt;<span class="tok-cls">Order</span>&gt; orders);
+
+    <span class="tok-com">// Cập nhật entity có sẵn từ DTO — bỏ qua null (PATCH-style)</span>
+    <span class="tok-ann">@BeanMapping</span>(nullValuePropertyMappingStrategy = <span class="tok-cls">NullValuePropertyMappingStrategy</span>.<span class="tok-cls">IGNORE</span>)
+    <span class="tok-kw">void</span> <span class="tok-fn">update</span>(<span class="tok-cls">UpdateProductRequest</span> req, <span class="tok-ann">@MappingTarget</span> <span class="tok-cls">Product</span> product);
+}
+
+<span class="tok-com">// Dùng:</span>
+<span class="tok-ann">@Service</span>
+<span class="tok-kw">class</span> <span class="tok-cls">OrderService</span> {
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">OrderRepository</span> repo; <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">OrderMapper</span> mapper;
+    <span class="tok-cls">OrderService</span>(<span class="tok-cls">OrderRepository</span> repo, <span class="tok-cls">OrderMapper</span> mapper) { <span class="tok-kw">this</span>.repo = repo; <span class="tok-kw">this</span>.mapper = mapper; }
+
+    <span class="tok-ann">@Transactional</span>(readOnly = <span class="tok-kw">true</span>)
+    <span class="tok-kw">public</span> <span class="tok-cls">OrderResponse</span> <span class="tok-fn">get</span>(<span class="tok-kw">long</span> id) {
+        <span class="tok-kw">return</span> mapper.<span class="tok-fn">toResponse</span>(repo.<span class="tok-fn">findWithItemsById</span>(id).<span class="tok-fn">orElseThrow</span>(() -&gt; <span class="tok-kw">new</span> <span class="tok-cls">NotFoundException</span>(<span class="tok-str">"order"</span>, id)));
+    }
+}</code></pre>
+        </div>
+        <div class="callout callout-warning">
+          <div class="callout-label">⚠️ Mapper chỉ nên chạm vào dữ liệu đã được nạp</div>
+          <p><code>toResponse(order)</code> đi qua <code>order.getItems()</code> — nếu quan hệ chưa nạp và ta ngoài transaction ⇒ <code>LazyInitializationException</code>. Luôn gọi mapper <strong>bên trong</strong> transaction với dữ liệu đã <code>join fetch</code>/<code>@EntityGraph</code> (chương 7). Với danh sách chỉ đọc, cân nhắc projection thẳng ra DTO thay vì entity → mapper.</p>
+        </div>
+
+        <h2 id="service-design">4. Thiết kế service</h2>
+
+
+        <h3 id="use-case">4.1. Method service = một use case</h3>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>OrderService.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Service</span>
+<span class="tok-kw">public</span> <span class="tok-kw">class</span> <span class="tok-cls">OrderService</span> {
+
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">OrderRepository</span> orders;
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">ProductRepository</span> products;
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">CustomerRepository</span> customers;
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">OrderMapper</span> mapper;
+    <span class="tok-com">// constructor …</span>
+
+    <span class="tok-ann">@Transactional</span>                                            <span class="tok-com">// ranh giới nguyên tử của use case</span>
+    <span class="tok-kw">public</span> <span class="tok-cls">OrderResponse</span> <span class="tok-fn">place</span>(<span class="tok-cls">CreateOrderRequest</span> req) {
+        <span class="tok-cls">Customer</span> customer = customers.<span class="tok-fn">findById</span>(req.<span class="tok-fn">customerId</span>())
+                .<span class="tok-fn">orElseThrow</span>(() -&gt; <span class="tok-kw">new</span> <span class="tok-cls">NotFoundException</span>(<span class="tok-str">"customer"</span>, req.<span class="tok-fn">customerId</span>()));
+
+        <span class="tok-cls">Order</span> order = <span class="tok-kw">new</span> <span class="tok-cls">Order</span>(customer);
+        <span class="tok-kw">for</span> (<span class="tok-cls">CreateOrderRequest</span>.<span class="tok-cls">Line</span> line : req.<span class="tok-fn">lines</span>()) {
+            <span class="tok-cls">Product</span> p = products.<span class="tok-fn">findById</span>(line.<span class="tok-fn">productId</span>())
+                    .<span class="tok-fn">orElseThrow</span>(() -&gt; <span class="tok-kw">new</span> <span class="tok-cls">NotFoundException</span>(<span class="tok-str">"product"</span>, line.<span class="tok-fn">productId</span>()));
+            <span class="tok-kw">if</span> (p.<span class="tok-fn">getStatus</span>() != <span class="tok-cls">ProductStatus</span>.<span class="tok-cls">ACTIVE</span>)
+                <span class="tok-kw">throw</span> <span class="tok-kw">new</span> <span class="tok-cls">BusinessRuleException</span>(<span class="tok-str">"PRODUCT_UNAVAILABLE"</span>, <span class="tok-str">"Sản phẩm ngừng bán: "</span> + p.<span class="tok-fn">getName</span>());
+            order.<span class="tok-fn">addItem</span>(p, line.<span class="tok-fn">quantity</span>());                 <span class="tok-com">// logic thêm dòng nằm trong entity</span>
+        }
+        <span class="tok-kw">return</span> mapper.<span class="tok-fn">toResponse</span>(orders.<span class="tok-fn">save</span>(order));
+    }
+}</code></pre>
+        </div>
+
+        <h3 id="rich-vs-anemic">4.2. Logic ở entity hay ở service?</h3>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th></th><th>Anemic (entity chỉ có getter/setter)</th><th>Rich (entity có hành vi)</th></tr></thead>
+            <tbody>
+              <tr><td>Quy tắc nằm ở</td><td>Service</td><td><strong>Entity</strong> cho quy tắc <em>của riêng nó</em>; service cho điều phối nhiều đối tượng</td></tr>
+              <tr><td>Ví dụ</td><td><code>order.setStatus(PAID)</code> ở bất cứ đâu</td><td><code>order.pay()</code> kiểm tra trạng thái hợp lệ, <strong>một nơi duy nhất</strong></td></tr>
+              <tr><td>Rủi ro</td><td>Quy tắc bị lặp / bỏ sót; trạng thái không hợp lệ dễ xảy ra</td><td>Entity phình nếu nhồi cả điều phối</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Hành vi nằm trong entity</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-com">// Entity bảo vệ bất biến của chính nó</span>
+<span class="tok-kw">public</span> <span class="tok-kw">void</span> <span class="tok-fn">pay</span>() {
+    <span class="tok-kw">if</span> (status != <span class="tok-cls">OrderStatus</span>.<span class="tok-cls">NEW</span>) <span class="tok-kw">throw</span> <span class="tok-kw">new</span> <span class="tok-cls">BusinessRuleException</span>(<span class="tok-str">"ORDER_NOT_PAYABLE"</span>, <span class="tok-str">"Đơn không ở trạng thái chờ thanh toán"</span>);
+    <span class="tok-kw">if</span> (items.<span class="tok-fn">isEmpty</span>())           <span class="tok-kw">throw</span> <span class="tok-kw">new</span> <span class="tok-cls">BusinessRuleException</span>(<span class="tok-str">"ORDER_EMPTY"</span>, <span class="tok-str">"Đơn không có sản phẩm"</span>);
+    <span class="tok-kw">this</span>.status = <span class="tok-cls">OrderStatus</span>.<span class="tok-cls">PAID</span>;
+}
+
+<span class="tok-kw">public</span> <span class="tok-cls">BigDecimal</span> <span class="tok-fn">total</span>() {
+    <span class="tok-kw">return</span> items.<span class="tok-fn">stream</span>().<span class="tok-fn">map</span>(<span class="tok-cls">OrderItem</span>::lineTotal).<span class="tok-fn">reduce</span>(<span class="tok-cls">BigDecimal</span>.<span class="tok-cls">ZERO</span>, <span class="tok-cls">BigDecimal</span>::add);
+}</code></pre>
+        </div>
+        <div class="java-rule"><strong>Quy tắc nào chỉ liên quan đến <em>một</em> aggregate (Order + OrderItem) → để trong entity; quy tắc cần <em>nhiều</em> aggregate/hệ thống ngoài (kiểm tra tồn kho ở Product, gọi cổng thanh toán) → service điều phối.</strong> Đây là ý tưởng của DDD-lite (xem OOP chương 8).</div>
+        <div class="java-note">
+          <h4>Đừng trả <code>Optional</code>/entity từ service ra controller</h4>
+          <p>Service nên **ném <code>NotFoundException</code>** thay vì trả <code>Optional.empty()</code> để controller tự quyết 404 — như vậy mọi controller xử lý "không thấy" nhất quán, và <code>@RestControllerAdvice</code> lo phần còn lại. Cũng như đã nói: trả DTO, không trả entity.</p>
+        </div>
+
+        <h2 id="api-design">5. Quy ước thiết kế API</h2>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Chủ đề</th><th>Nên</th><th>Tránh</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Tên tài nguyên</strong></td><td>Danh từ số nhiều: <code>/api/orders</code>, <code>/api/orders/42/items</code></td><td>Động từ: <code>/api/getOrder</code>, <code>/api/createNewOrder</code></td></tr>
+              <tr><td><strong>Hành động không phải CRUD</strong></td><td>Sub-resource/hành động rõ: <code>POST /api/orders/42/cancel</code>, <code>POST /api/orders/42/payments</code></td><td>Nhét vào <code>PUT</code> với cờ lạ</td></tr>
+              <tr><td><strong>Lọc</strong></td><td><code>GET /api/orders?status=PAID&amp;from=2025-01-01</code></td><td>Body trong <code>GET</code></td></tr>
+              <tr><td><strong>Sắp xếp</strong></td><td><code>?sort=createdAt,desc</code></td><td>Tham số tự chế mỗi endpoint một kiểu</td></tr>
+              <tr><td><strong>Phân trang</strong></td><td><code>?page=0&amp;size=20</code> + <code>PagedResponse</code> (chương 6); giới hạn <code>size</code></td><td>Trả toàn bộ bảng</td></tr>
+              <tr><td><strong>Định dạng ngày</strong></td><td>ISO-8601 UTC: <code>2025-03-01T08:30:00Z</code></td><td><code>dd/MM/yyyy</code> không múi giờ</td></tr>
+              <tr><td><strong>Tiền</strong></td><td>Chuỗi/<code>BigDecimal</code> + mã tiền tệ; hoặc số nguyên đơn vị nhỏ nhất</td><td><code>double</code></td></tr>
+              <tr><td><strong>Lỗi</strong></td><td>Một khuôn <code>application/problem+json</code> (chương 5)</td><td>Mỗi endpoint một kiểu lỗi</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 id="versioning">5.1. Version hoá API</h3>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Cách</th><th>Ví dụ</th><th>Ghi chú</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Trong URL</strong></td><td><code>/api/v1/orders</code></td><td>Dễ thấy, dễ cache &amp; route — <strong>phổ biến nhất</strong></td></tr>
+              <tr><td>Header</td><td><code>X-API-Version: 2</code></td><td>URL sạch, nhưng khó thử bằng trình duyệt</td></tr>
+              <tr><td>Media type</td><td><code>Accept: application/vnd.shop.v2+json</code></td><td>Chuẩn REST nhưng phức tạp</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Quan trọng hơn <em>cách</em> version là <strong>kỷ luật tương thích ngược</strong>: thêm trường mới là an toàn; <strong>xoá/đổi tên/đổi nghĩa</strong> trường là <em>breaking change</em> ⇒ phải tăng version. Đừng tăng version vì mọi thay đổi nhỏ — hãy thiết kế để <em>thêm</em> chứ không <em>sửa</em>.</p>
+
+        <h3 id="idempotency">5.2. Idempotency — thử lại không gây hại</h3>
+
+        <p>Mạng chập chờn: client gửi <code>POST /payments</code>, không nhận được phản hồi, <strong>thử lại</strong> — khách bị trừ tiền hai lần? <code>GET/PUT/DELETE</code> vốn idempotent; <code>POST</code> thì không. Giải pháp phổ biến (Stripe, các cổng thanh toán): client gửi header **<code>Idempotency-Key</code><strong> (UUID); server lưu kết quả theo khoá và </strong>trả lại cùng kết quả** nếu thấy khoá lần nữa.</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>IdempotencyFilter (ý tưởng)</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@PostMapping</span>(<span class="tok-str">"/api/payments"</span>)
+<span class="tok-kw">public</span> <span class="tok-cls">ResponseEntity</span>&lt;<span class="tok-cls">PaymentResponse</span>&gt; <span class="tok-fn">pay</span>(<span class="tok-ann">@RequestHeader</span>(<span class="tok-str">"Idempotency-Key"</span>) <span class="tok-cls">String</span> key,
+                                           <span class="tok-ann">@Valid</span> <span class="tok-ann">@RequestBody</span> <span class="tok-cls">PaymentRequest</span> req) {
+    <span class="tok-kw">return</span> idempotency.<span class="tok-fn">execute</span>(key, () -&gt; paymentService.<span class="tok-fn">pay</span>(req))      <span class="tok-com">// lần 2 cùng key → trả kết quả đã lưu</span>
+                      .<span class="tok-fn">map</span>(r -&gt; <span class="tok-cls">ResponseEntity</span>.<span class="tok-fn">status</span>(<span class="tok-cls">HttpStatus</span>.<span class="tok-cls">CREATED</span>).<span class="tok-fn">body</span>(r))
+                      .<span class="tok-fn">orElseGet</span>(() -&gt; <span class="tok-cls">ResponseEntity</span>.<span class="tok-fn">status</span>(<span class="tok-cls">HttpStatus</span>.<span class="tok-cls">CONFLICT</span>).<span class="tok-fn">build</span>());   <span class="tok-com">// đang xử lý bởi request khác</span>
+}
+<span class="tok-com">// Lưu (key, hash(body), response, status) trong bảng/Redis với TTL 24h; ràng buộc UNIQUE(key) chống hai request đồng thời.</span></code></pre>
+        </div>
+
+        <h2 id="openapi">6. OpenAPI &amp; Swagger UI — tài liệu sống</h2>
+
+        <p><strong>OpenAPI</strong> là chuẩn mô tả REST API bằng JSON/YAML (đường dẫn, tham số, schema request/response, mã lỗi, xác thực). <strong>Swagger UI</strong> đọc file đó và dựng trang thử API trong trình duyệt. Với thư viện <strong>springdoc-openapi</strong>, tài liệu được <em>sinh từ chính code</em> của bạn — không lệch pha.</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>pom.xml</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-kw">&lt;dependency</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;groupId</span><span class="tok-kw">&gt;</span>org.springdoc<span class="tok-kw">&lt;/groupId</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;artifactId</span><span class="tok-kw">&gt;</span>springdoc-openapi-starter-webmvc-ui<span class="tok-kw">&lt;/artifactId</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;version</span><span class="tok-kw">&gt;</span>2.8.4<span class="tok-kw">&lt;/version</span><span class="tok-kw">&gt;</span>          <span class="tok-com">&lt;!-- không thuộc BOM của Boot — kiểm tra bản mới nhất tương thích Boot 3.x --&gt;</span>
+<span class="tok-kw">&lt;/dependency</span><span class="tok-kw">&gt;</span></code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Địa chỉ sau khi chạy</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-fn">http://localhost:8080/swagger-ui.html</span>    <span class="tok-com"> # giao diện thử API</span>
+<span class="tok-fn">http://localhost:8080/v3/api-docs</span>         <span class="tok-com"> # spec OpenAPI dạng JSON</span>
+<span class="tok-fn">http://localhost:8080/v3/api-docs.yaml</span>    <span class="tok-com"> # dạng YAML</span></code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Bổ sung mô tả</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@RestController</span>
+<span class="tok-ann">@RequestMapping</span>(<span class="tok-str">"/api/v1/orders"</span>)
+<span class="tok-ann">@Tag</span>(name = <span class="tok-str">"Orders"</span>, description = <span class="tok-str">"Quản lý đơn hàng"</span>)
+<span class="tok-kw">class</span> <span class="tok-cls">OrderController</span> {
+
+    <span class="tok-ann">@Operation</span>(summary = <span class="tok-str">"Đặt hàng"</span>, description = <span class="tok-str">"Tạo đơn mới từ danh sách dòng hàng; kiểm tra tồn kho &amp; trạng thái sản phẩm."</span>)
+    <span class="tok-ann">@ApiResponses</span>({
+        <span class="tok-ann">@ApiResponse</span>(responseCode = <span class="tok-str">"201"</span>, description = <span class="tok-str">"Đã tạo đơn"</span>),
+        <span class="tok-ann">@ApiResponse</span>(responseCode = <span class="tok-str">"400"</span>, description = <span class="tok-str">"Dữ liệu không hợp lệ"</span>,
+                     content = <span class="tok-ann">@Content</span>(mediaType = <span class="tok-str">"application/problem+json"</span>, schema = <span class="tok-ann">@Schema</span>(implementation = <span class="tok-cls">ProblemDetail</span>.<span class="tok-kw">class</span>))),
+        <span class="tok-ann">@ApiResponse</span>(responseCode = <span class="tok-str">"422"</span>, description = <span class="tok-str">"Vi phạm luật nghiệp vụ (ngừng bán…)"</span>)
+    })
+    <span class="tok-ann">@PostMapping</span>
+    <span class="tok-cls">ResponseEntity</span>&lt;<span class="tok-cls">OrderResponse</span>&gt; <span class="tok-fn">place</span>(<span class="tok-ann">@Valid</span> <span class="tok-ann">@RequestBody</span> <span class="tok-cls">CreateOrderRequest</span> req) { ... }
+}
+
+<span class="tok-kw">public</span> <span class="tok-kw">record</span> <span class="tok-cls">CreateOrderRequest</span>(
+        <span class="tok-ann">@Schema</span>(description = <span class="tok-str">"Mã khách hàng"</span>, example = <span class="tok-str">"17"</span>) <span class="tok-ann">@NotNull</span> <span class="tok-cls">Long</span> customerId,
+        <span class="tok-ann">@Schema</span>(description = <span class="tok-str">"Danh sách dòng hàng, tối thiểu 1"</span>) <span class="tok-ann">@NotEmpty</span> <span class="tok-ann">@Valid</span> <span class="tok-cls">List</span>&lt;<span class="tok-cls">Line</span>&gt; lines) { ... }</code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Cấu hình chung (tên, version, xác thực JWT)</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Configuration</span>
+<span class="tok-kw">class</span> <span class="tok-cls">OpenApiConfig</span> {
+    <span class="tok-ann">@Bean</span>
+    <span class="tok-cls">OpenAPI</span> <span class="tok-fn">shopApi</span>() {
+        <span class="tok-kw">return</span> <span class="tok-kw">new</span> <span class="tok-cls">OpenAPI</span>()
+                .<span class="tok-fn">info</span>(<span class="tok-kw">new</span> <span class="tok-cls">Info</span>().<span class="tok-fn">title</span>(<span class="tok-str">"Shop API"</span>).<span class="tok-fn">version</span>(<span class="tok-str">"v1"</span>).<span class="tok-fn">description</span>(<span class="tok-str">"API quản lý cửa hàng"</span>))
+                .<span class="tok-fn">components</span>(<span class="tok-kw">new</span> <span class="tok-cls">Components</span>().<span class="tok-fn">addSecuritySchemes</span>(<span class="tok-str">"bearerAuth"</span>,
+                        <span class="tok-kw">new</span> <span class="tok-cls">SecurityScheme</span>().<span class="tok-fn">type</span>(<span class="tok-cls">SecurityScheme</span>.<span class="tok-cls">Type</span>.<span class="tok-cls">HTTP</span>).<span class="tok-fn">scheme</span>(<span class="tok-str">"bearer"</span>).<span class="tok-fn">bearerFormat</span>(<span class="tok-str">"JWT"</span>)))
+                .<span class="tok-fn">addSecurityItem</span>(<span class="tok-kw">new</span> <span class="tok-cls">SecurityRequirement</span>().<span class="tok-fn">addList</span>(<span class="tok-str">"bearerAuth"</span>));     <span class="tok-com">// nút "Authorize" trong Swagger UI</span>
+    }
+}</code></pre>
+        </div>
+        <p>Bean Validation (<code>@NotNull</code>, <code>@Size</code>, <code>@Min</code>…) tự được đưa vào schema (<code>required</code>, <code>maxLength</code>, <code>minimum</code>). Đó là một lý do nữa để đặt ràng buộc trên DTO.</p>
+        <div class="callout callout-tip">
+          <div class="callout-label">💡 Dùng OpenAPI làm hợp đồng với frontend</div>
+          <p>Từ file <code>/v3/api-docs</code>, frontend <strong>tự sinh client có kiểu</strong> (TypeScript) bằng <code>openapi-generator</code>/<code>openapi-typescript</code>/<code>orval</code> — đổi API ở backend ⇒ build frontend <strong>báo lỗi biên dịch</strong> thay vì nổ lúc chạy. Lưu spec vào Git, so sánh phiên bản (<code>oasdiff</code>) trong CI để phát hiện <em>breaking change</em> trước khi merge.</p>
+        </div>
+        <div class="callout callout-warning">
+          <div class="callout-label">🔒 Production</div>
+          <p>Swagger UI mở công khai lộ toàn bộ bề mặt API. Tắt hoặc đặt sau xác thực ở production: <code>springdoc.swagger-ui.enabled=false</code> và <code>springdoc.api-docs.enabled=false</code> trong <code>application-prod.yml</code>.</p>
+        </div>
+
+        <h2 id="archunit">7. Giữ kiến trúc không "mục" theo thời gian</h2>
+
+        <p>Quy ước kiến trúc nếu chỉ nằm trong tài liệu sẽ bị phá trong tuần thứ ba. <strong>ArchUnit</strong> biến chúng thành <strong>test</strong> — vi phạm thì CI đỏ:</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>pom.xml &amp; ArchitectureTest.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-com">// &lt;dependency&gt;&lt;groupId&gt;com.tngtech.archunit&lt;/groupId&gt;&lt;artifactId&gt;archunit-junit5&lt;/artifactId&gt;</span>
+<span class="tok-com">//   &lt;version&gt;1.3.0&lt;/version&gt;&lt;scope&gt;test&lt;/scope&gt;&lt;/dependency&gt;</span>
+
+<span class="tok-ann">@AnalyzeClasses</span>(packages = <span class="tok-str">"vn.itbasic.shop"</span>, importOptions = <span class="tok-cls">ImportOption</span>.<span class="tok-cls">DoNotIncludeTests</span>.<span class="tok-kw">class</span>)
+<span class="tok-kw">class</span> <span class="tok-cls">ArchitectureTest</span> {
+
+    <span class="tok-ann">@ArchTest</span>
+    <span class="tok-kw">static</span> <span class="tok-kw">final</span> <span class="tok-cls">ArchRule</span> controllers_khong_goi_repository =
+            <span class="tok-fn">noClasses</span>().<span class="tok-fn">that</span>().<span class="tok-fn">haveSimpleNameEndingWith</span>(<span class="tok-str">"Controller"</span>)
+                       .<span class="tok-fn">should</span>().<span class="tok-fn">dependOnClassesThat</span>().<span class="tok-fn">haveSimpleNameEndingWith</span>(<span class="tok-str">"Repository"</span>);
+
+    <span class="tok-ann">@ArchTest</span>
+    <span class="tok-kw">static</span> <span class="tok-kw">final</span> <span class="tok-cls">ArchRule</span> service_khong_biet_http =
+            <span class="tok-fn">noClasses</span>().<span class="tok-fn">that</span>().<span class="tok-fn">haveSimpleNameEndingWith</span>(<span class="tok-str">"Service"</span>)
+                       .<span class="tok-fn">should</span>().<span class="tok-fn">dependOnClassesThat</span>().<span class="tok-fn">resideInAnyPackage</span>(<span class="tok-str">"org.springframework.http.."</span>, <span class="tok-str">"jakarta.servlet.."</span>);
+
+    <span class="tok-ann">@ArchTest</span>
+    <span class="tok-kw">static</span> <span class="tok-kw">final</span> <span class="tok-cls">ArchRule</span> khong_tra_entity_ra_controller =
+            <span class="tok-fn">noMethods</span>().<span class="tok-fn">that</span>().<span class="tok-fn">areDeclaredInClassesThat</span>().<span class="tok-fn">haveSimpleNameEndingWith</span>(<span class="tok-str">"Controller"</span>)
+                       .<span class="tok-fn">and</span>().<span class="tok-fn">arePublic</span>()
+                       .<span class="tok-fn">should</span>().<span class="tok-fn">haveRawReturnType</span>(<span class="tok-fn">annotatedWith</span>(<span class="tok-cls">Entity</span>.<span class="tok-kw">class</span>));
+
+    <span class="tok-ann">@ArchTest</span>
+    <span class="tok-kw">static</span> <span class="tok-kw">final</span> <span class="tok-cls">ArchRule</span> khong_vong_giua_cac_feature =
+            <span class="tok-fn">slices</span>().<span class="tok-fn">matching</span>(<span class="tok-str">"vn.itbasic.shop.(*).."</span>).<span class="tok-fn">should</span>().<span class="tok-fn">beFreeOfCycles</span>();
+}</code></pre>
+        </div>
+
+        <h2 id="cheat-sheet">8. Cheat sheet chương 8</h2>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Quyết định</th><th>Chọn</th></tr></thead>
+            <tbody>
+              <tr><td>Tầng gọi tầng</td><td>Controller → Service → Repository (một chiều)</td></tr>
+              <tr><td>Tổ chức package</td><td>Theo <strong>tính năng</strong>; <code>package-private</code> cho nội bộ</td></tr>
+              <tr><td>Dữ liệu qua ranh giới</td><td>**DTO <code>record</code>** riêng cho request/response; không lộ entity</td></tr>
+              <tr><td>Ánh xạ</td><td><strong>MapStruct</strong> (compile-time); gọi trong transaction</td></tr>
+              <tr><td>Quy tắc nghiệp vụ</td><td>Của một aggregate → entity; điều phối nhiều thứ → service</td></tr>
+              <tr><td>Version API</td><td><code>/api/v1/…</code> + kỷ luật tương thích ngược</td></tr>
+              <tr><td>POST có thể bị thử lại</td><td><code>Idempotency-Key</code></td></tr>
+              <tr><td>Tài liệu API</td><td>springdoc → OpenAPI; sinh client; tắt ở prod</td></tr>
+              <tr><td>Bảo vệ kiến trúc</td><td>ArchUnit trong CI</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="bai-tap">Bài tập</h2>
+
+        <div class="exercises">
+
+          <div class="exercise">
+            <h4>Tách fat controller</h4>
+            <div class="exercise-body">
+              <p>Cho <code>OrderController.create</code> dài 60 dòng chứa kiểm tra tồn kho, tính tổng, trừ kho, lưu, gửi email. Hãy refactor:</p>
+              <ul>
+                <li>Controller còn ≤ 8 dòng.</li>
+                <li>Nghiệp vụ vào <code>OrderService.place</code> có <code>@Transactional</code>.</li>
+                <li>Tính tổng tiền vào <code>Order.total()</code>; email gửi <em>sau commit</em> (chương 7 mục 5.4).</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Controller chỉ: <code>@Valid</code> body → <code>service.place(req)</code> → <code>201 + Location</code>. Kiểm tra <code>ArchUnit</code> rule "controller không phụ thuộc repository" để chắc chắn không ai kéo logic ngược lại.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>DTO &amp; MapStruct</h4>
+            <div class="exercise-body">
+              <p>Với entity <code>Customer(id, name, email, passwordHash, role, createdAt, orders)</code>:</p>
+              <ul>
+                <li>Tạo <code>CustomerResponse</code> (không có <code>passwordHash</code>, <code>orders</code>), <code>CreateCustomerRequest</code>, <code>UpdateCustomerRequest</code>.</li>
+                <li>Viết <code>CustomerMapper</code> (MapStruct) gồm cả method <code>update(@MappingTarget)</code> bỏ qua <code>null</code>.</li>
+                <li>Thử cố ý thêm trường vào <code>CustomerResponse</code> không có nguồn — MapStruct báo gì lúc biên dịch?</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>MapStruct cảnh báo <code>Unmapped target property: "x"</code>; đặt <code>unmappedTargetPolicy = ReportingPolicy.ERROR</code> trong <code>@Mapper</code> để biến cảnh báo thành <strong>lỗi biên dịch</strong>. Mật khẩu băm không bao giờ có trong DTO trả ra.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Package-by-feature</h4>
+            <div class="exercise-body">
+              <p>Chuyển dự án từ package-by-layer sang package-by-feature (<code>order</code>, <code>product</code>, <code>customer</code>).</p>
+              <ul>
+                <li>Đặt <code>OrderRepository</code> và entity <code>Order</code> là <code>package-private</code>; chỉ <code>OrderService</code>, <code>OrderResponse</code>… <code>public</code>.</li>
+                <li>Một service khác (<code>ReportService</code>) cần số đơn: bạn cho nó phụ thuộc gì? (Gợi ý: thêm method <code>public</code> trên <code>OrderService</code>, không mở repository.)</li>
+                <li>Chạy <code>slices().…beFreeOfCycles()</code> — có vòng phụ thuộc giữa các feature không?</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Che repository buộc mọi truy cập đi qua service ⇒ quy tắc nghiệp vụ không bị vòng qua. Nếu <code>order</code> ↔ <code>customer</code> phụ thuộc lẫn nhau, đó là dấu hiệu cần tách khái niệm thứ ba hoặc dùng sự kiện.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Tài liệu OpenAPI</h4>
+            <div class="exercise-body">
+              <p>Thêm springdoc. Mô tả đủ <code>POST /api/v1/orders</code>: mô tả, ví dụ, mọi mã lỗi (<code>400/404/422</code>) với <code>ProblemDetail</code>.</p>
+              <ul>
+                <li>Dùng nút <strong>Authorize</strong> nhập JWT mẫu.</li>
+                <li>Tải <code>v3/api-docs.yaml</code>, sinh client TypeScript bằng <code>openapi-typescript</code>.</li>
+                <li>Đổi tên một trường trong DTO — client sinh lại có lỗi biên dịch không?</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Đó chính là giá trị của contract: thay đổi phá vỡ <strong>hiện ra ở build frontend</strong>, không phải lúc người dùng bấm nút. Thêm bước CI <code>oasdiff breaking</code> giữa spec cũ và mới.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Idempotency-Key</h4>
+            <div class="exercise-body">
+              <p>Cài <code>POST /api/v1/payments</code> idempotent bằng bảng <code>idempotency_keys(key UNIQUE, request_hash, response_json, status)</code>.</p>
+              <ul>
+                <li>Gửi cùng key hai lần tuần tự ⇒ cùng kết quả, chỉ <strong>một</strong> lần trừ tiền.</li>
+                <li>Gửi hai request <strong>đồng thời</strong> cùng key ⇒ một cái thắng, một cái nhận 409 (hoặc chờ).</li>
+                <li>Cùng key nhưng body khác ⇒ trả 422.</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Chốt chặn thật là <code>UNIQUE(key)</code>: <code>INSERT</code> trước (trạng thái <code>PROCESSING</code>), request thua cuộc bắt <code>DataIntegrityViolationException</code>. So sánh <code>request_hash</code> để phát hiện tái dùng key sai.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+        </div>
+
+        <h2 id="quiz">Quiz</h2>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q1</span>
+            <div class="quiz-q-text"><p>Vì sao không trả thẳng entity JPA ra response?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <ul>
+                <li>Lộ trường nhạy cảm/nội bộ; mass assignment khi nhận vào.</li>
+                <li>Hợp đồng API bị buộc vào schema DB — đổi bảng là vỡ API.</li>
+                <li>Serialize kích hoạt lazy loading → <code>LazyInitializationException</code>, N+1, vòng lặp quan hệ hai chiều.</li>
+              </ul>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q2</span>
+            <div class="quiz-q-text"><p>Package-by-feature hơn package-by-layer ở điểm nào?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Kết dính cao (mọi thứ của một tính năng ở một chỗ), cho phép dùng **<code>package-private</code>** để che repository/entity, tách microservice dễ hơn, và tìm code nhanh. Package-by-layer rải một tính năng khắp 4-5 package và buộc mọi thứ phải <code>public</code>.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q3</span>
+            <div class="quiz-q-text"><p>Controller, service, repository mỗi tầng chịu trách nhiệm gì? Điều gì tầng service <em>không</em> được biết?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Controller: HTTP (đọc request, validate, mã trạng thái). Service: nghiệp vụ + ranh giới transaction. Repository: truy cập dữ liệu. Service <strong>không</strong> được biết HTTP (<code>ResponseEntity</code>, mã trạng thái, <code>HttpServletRequest</code>) — để tái dùng ngoài web và test không cần dựng web.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q4</span>
+            <div class="quiz-q-text"><p>MapStruct khác ánh xạ bằng reflection (ModelMapper) thế nào?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>MapStruct sinh mã Java thông thường <strong>lúc biên dịch</strong> (annotation processor): nhanh như viết tay, không reflection, và thiếu trường được báo <strong>ngay lúc build</strong>. Reflection-based đoán lúc chạy: chậm hơn và lỗi chỉ hiện khi chạy.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q5</span>
+            <div class="quiz-q-text"><p>Idempotency-Key giải quyết vấn đề gì?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p><code>POST</code> không idempotent: client mất kết nối rồi thử lại có thể tạo giao dịch hai lần. Client gửi một <code>Idempotency-Key</code> duy nhất cho mỗi <em>ý định</em>; server lưu kết quả theo khoá và trả lại đúng kết quả đó khi gặp lại — thử lại an toàn.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q6</span>
+            <div class="quiz-q-text"><p>Lợi ích của việc sinh OpenAPI từ code và dùng nó như hợp đồng?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Tài liệu <strong>không lệch</strong> so với code; Swagger UI cho phép thử API; frontend/đối tác <strong>sinh client có kiểu</strong> — thay đổi phá vỡ thành lỗi biên dịch thay vì lỗi lúc chạy; so sánh spec trong CI phát hiện breaking change sớm.</p>
+            </div>
+          </details>
+        </div>
+
+        <h2 id="tong-ket">Tổng kết</h2>
+
+        <p>Sau chương 8, bạn đã nắm:</p>
+        <ul>
+          <li><strong>Layered</strong>: Controller → Service → Repository; controller mỏng, nghiệp vụ ở service, service không biết HTTP.</li>
+          <li><strong>Package-by-feature</strong> + <code>package-private</code> che ruột từng tính năng.</li>
+          <li>**DTO <code>record</code><strong> theo vai trò (request/response/summary); </strong>MapStruct** ánh xạ lúc biên dịch, gọi trong transaction.</li>
+          <li>Quy tắc của một aggregate → <strong>entity</strong>; điều phối nhiều đối tượng → <strong>service</strong>; service ném exception thay vì trả <code>Optional</code>.</li>
+          <li>Quy ước API: danh từ số nhiều, lọc/sắp xếp/phân trang thống nhất, ISO-8601, version <code>/v1</code>, <strong>tương thích ngược</strong>, <strong>Idempotency-Key</strong>.</li>
+          <li><strong>springdoc</strong> sinh OpenAPI + Swagger UI (tắt ở prod); dùng spec làm hợp đồng và sinh client.</li>
+          <li><strong>ArchUnit</strong> biến quy ước kiến trúc thành test.</li>
+        </ul>
+
+        <h2 id="ket-noi">Kết nối</h2>
+        <ul>
+          <li><strong>Chương 4-5</strong> — controller, DTO request, validation và lỗi <code>ProblemDetail</code> được tài liệu hoá trong OpenAPI.</li>
+          <li><strong>Chương 7</strong> — mapper/DTO là lối thoát khỏi <code>LazyInitializationException</code>; ranh giới transaction ở service.</li>
+          <li><strong>Chương 9-10</strong> — mô tả xác thực JWT trong OpenAPI; phân quyền theo endpoint/method.</li>
+          <li><strong>Chương 11</strong> — test từng tầng (service thuần, <code>@WebMvcTest</code>, <code>@DataJpaTest</code>) nhờ ranh giới rõ ràng ở đây.</li>
+          <li><strong>Chương 13</strong> — package-by-feature là bước đệm tách microservice; tài liệu OpenAPI trở thành hợp đồng giữa các service.</li>
+          <li><strong>OOP chương 2-3 &amp; 8</strong> — SOLID, thiết kế lớp, DDD-lite: nền tảng của các quyết định ở đây.</li>
+          <li><strong>System Design chương 6</strong> — Monolith vs Microservices: khi nào nên tách.</li>
+        </ul>
+
+        <nav class="chapter-nav">
+          <a href="chuong7.html" class="prev">
+            <div class="dir">← Chương 7</div>
+            <div class="label">JPA nâng cao &amp;amp; Transaction</div>
+          </a>
+          <a href="chuong9.html" class="next">
+            <div class="dir">Chương 9 →</div>
+            <div class="label">Spring Security</div>
+          </a>
+        </nav>
+
+      </main>
+
+      <aside class="toc">
+        <div class="toc-label">Trong chương này</div>
+        <ul>
+          <li><a href="#layered">1. Kiến trúc phân tầng (layered)</a></li>
+          <li><a href="#package">2. Tổ chức package: theo tầng hay theo tính năng?</a></li>
+          <li><a href="#dto">3. DTO — hợp đồng tách khỏi mô hình dữ liệu</a></li>
+          <li class="level-3"><a href="#mapstruct">3.1. MapStruct — ánh xạ sinh lúc biên dịch</a></li>
+          <li><a href="#service-design">4. Thiết kế service</a></li>
+          <li class="level-3"><a href="#use-case">4.1. Method service = một use case</a></li>
+          <li class="level-3"><a href="#rich-vs-anemic">4.2. Logic ở entity hay ở service?</a></li>
+          <li><a href="#api-design">5. Quy ước thiết kế API</a></li>
+          <li class="level-3"><a href="#versioning">5.1. Version hoá API</a></li>
+          <li class="level-3"><a href="#idempotency">5.2. Idempotency — thử lại không gây hại</a></li>
+          <li><a href="#openapi">6. OpenAPI &amp; Swagger UI — tài liệu sống</a></li>
+          <li><a href="#archunit">7. Giữ kiến trúc không "mục" theo thời gian</a></li>
+          <li><a href="#cheat-sheet">8. Cheat sheet chương 8</a></li>
+          <li><a href="#bai-tap">Bài tập</a></li>
+          <li><a href="#quiz">Quiz</a></li>
+          <li><a href="#tong-ket">Tổng kết</a></li>
+          <li><a href="#ket-noi">Kết nối</a></li>
+        </ul>
+      </aside>
+
+    </div>
+  </div>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p>
+        Chương 8 — Kiến trúc tầng, DTO &amp;amp; OpenAPI · Spring Boot sub-pillar · Pillar 9 IT Basic<br/>
+        <a href="chuong7.html">← Chương 7</a> · <a href="../index.html">Spring Boot TOC</a> · <a href="chuong9.html">Chương 9 →</a>
+      </p>
+    </div>
+  </footer>
+
+  <script src="../../shared/js/chapter.js"></script>
+</body>
+</html>

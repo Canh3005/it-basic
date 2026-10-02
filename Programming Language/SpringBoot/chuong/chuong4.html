@@ -1,0 +1,770 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chương 4 — Spring MVC &amp; REST API — từ request đến JSON · Spring Boot Sub-pillar</title>
+  <meta name="description" content="DispatcherServlet và luồng xử lý request, @RestController, mapping, @PathVariable/@RequestParam/@RequestBody, ResponseEntity, mã trạng thái HTTP, Jackson, content negotiation, upload file, filter vs interceptor." />
+  <meta name="theme-color" content="#4a9a28" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Bitter:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="../../shared/css/base.css">
+  <link rel="stylesheet" href="../css/theme.css">
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="container">
+      <a class="site-logo" href="../../../index.html">
+        <span class="mark mark-spring">Sb</span>
+        Spring Boot · IT Basic
+      </a>
+      <nav>
+        <ul class="site-nav">
+          <li><a href="../../../index.html">IT Basic</a></li>
+          <li><a href="../../index.html">Pillar 9</a></li>
+          <li><a href="../../Java/index.html">Java</a></li>
+          <li><a href="../index.html" class="active">Spring Boot</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <div class="container">
+    <header class="chapter-header">
+      <div class="breadcrumb">
+        <a href="../../../index.html">IT Basic</a><span class="sep">/</span>
+        <a href="../../index.html">Pillar 9</a><span class="sep">/</span>
+        <a href="../index.html">Spring Boot</a><span class="sep">/</span>
+        <span>Chương 4</span>
+      </div>
+      <div class="chapter-num">Chương 04 · Spring MVC &amp; REST</div>
+      <h1 style="font-size: 2.6rem; margin: 0 0 12px; color: var(--ink);">
+        Spring MVC &amp; REST API — từ request đến JSON
+      </h1>
+      <p class="lead">
+        REST API là thứ bạn sẽ viết nhiều nhất với Spring Boot. Chương này trả lời hai câu: <strong>một request đi qua những gì</strong> từ lúc vào Tomcat đến lúc ra JSON, và <strong>thiết kế một API CRUD đúng chuẩn</strong> (đúng động từ, đúng mã trạng thái, đúng header). Dữ liệu tạm giữ trong bộ nhớ — CSDL thật vào ở chương 6.
+      </p>
+      <div class="chapter-meta">
+        <span class="item"><strong>Bài tập:</strong> 5</span>
+        <span class="item"><strong>Quiz:</strong> 6</span>
+        <span class="item"><strong>Prerequisites:</strong> Chương 1-3</span>
+      </div>
+    </header>
+
+    <div class="layout">
+
+      <main class="prose">
+
+        <div class="callout callout-goal">
+          <div class="callout-label">🎯 Mục tiêu chương</div>
+          <ul>
+            <li>Vẽ được <strong>luồng xử lý request</strong> qua <code>DispatcherServlet</code>, <code>HandlerMapping</code>, <code>HttpMessageConverter</code>.</li>
+            <li>Viết controller với <code>@RestController</code> và các <code>@GetMapping</code>/<code>@PostMapping</code>/<code>@PutMapping</code>/<code>@PatchMapping</code>/<code>@DeleteMapping</code>.</li>
+            <li>Nhận dữ liệu: <code>@PathVariable</code>, <code>@RequestParam</code>, <code>@RequestBody</code>, <code>@RequestHeader</code>.</li>
+            <li>Trả dữ liệu đúng chuẩn: <code>ResponseEntity</code>, mã trạng thái, header <code>Location</code>.</li>
+            <li>Tuỳ biến JSON bằng <strong>Jackson</strong>: tên trường, ẩn trường, định dạng ngày.</li>
+            <li>Phân biệt <strong>Filter</strong>, <strong>Interceptor</strong>, **<code>@ControllerAdvice</code>** — mỗi cái nằm ở đâu.</li>
+            <li>Xử lý <strong>upload/download file</strong> và <strong>content negotiation</strong> ở mức cơ bản.</li>
+          </ul>
+        </div>
+
+        <h2 id="luong-request">1. Một request đi qua những gì?</h2>
+
+        <p>Khi <code>GET /api/products/42</code> đến, trước khi code controller của bạn chạy đã có cả một dây chuyền:</p>
+        <div class="jvm-flow">
+          <div class="stages">
+            <div class="stage"><div class="stage-title">1. Tomcat</div><div class="stage-content">Nhận kết nối TCP, phân tích HTTP thành <code>HttpServletRequest</code></div></div>
+            <div class="stage blue"><div class="stage-title">2. Filter chain</div><div class="stage-content">Servlet <code>Filter</code> (Security, CORS, logging…)</div></div>
+            <div class="stage"><div class="stage-title">3. <code>DispatcherServlet</code></div><div class="stage-content"><strong>Front controller</strong> — cửa vào duy nhất của Spring MVC</div></div>
+            <div class="stage blue"><div class="stage-title">4. <code>HandlerMapping</code></div><div class="stage-content">Tìm controller + method khớp URL &amp; HTTP method</div></div>
+            <div class="stage"><div class="stage-title">5. Interceptor (trước)</div><div class="stage-content"><code>preHandle</code> của <code>HandlerInterceptor</code></div></div>
+            <div class="stage blue"><div class="stage-title">6. Giải tham số</div><div class="stage-content"><code>@PathVariable</code>, <code>@RequestBody</code> (JSON → object nhờ Jackson)</div></div>
+            <div class="stage"><div class="stage-title">7. <strong>Method của bạn</strong></div><div class="stage-content">Chạy logic, trả về object / <code>ResponseEntity</code></div></div>
+            <div class="stage blue"><div class="stage-title">8. <code>HttpMessageConverter</code></div><div class="stage-content">Object → JSON (Jackson), ghi vào response</div></div>
+          </div>
+          <div class="caption">Lỗi xảy ra ở bất cứ bước nào đều được <code>@ControllerAdvice</code> (chương 5) bắt và chuyển thành response.</div>
+        </div>
+        <div class="java-rule">**<code>DispatcherServlet</code> là pattern Front Controller**: mọi request đi qua một cửa, rồi được phân phát. Bạn không bao giờ tự đăng ký servlet cho từng endpoint — Boot đã cấu hình sẵn (chương 1).</div>
+
+        <h2 id="controller">2. Controller đầu tiên</h2>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>ProductController.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@RestController</span>                          <span class="tok-com">// = @Controller + @ResponseBody: mọi method trả về BODY (JSON)</span>
+<span class="tok-ann">@RequestMapping</span>(<span class="tok-str">"/api/products"</span>)         <span class="tok-com">// tiền tố chung cho cả lớp</span>
+<span class="tok-kw">public</span> <span class="tok-kw">class</span> <span class="tok-cls">ProductController</span> {
+
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">ProductService</span> service;
+
+    <span class="tok-kw">public</span> <span class="tok-cls">ProductController</span>(<span class="tok-cls">ProductService</span> service) {
+        <span class="tok-kw">this</span>.service = service;
+    }
+
+    <span class="tok-ann">@GetMapping</span>                          <span class="tok-com">// GET /api/products</span>
+    <span class="tok-kw">public</span> <span class="tok-cls">List</span>&lt;<span class="tok-cls">Product</span>&gt; <span class="tok-fn">list</span>() {
+        <span class="tok-kw">return</span> service.<span class="tok-fn">findAll</span>();
+    }
+
+    <span class="tok-ann">@GetMapping</span>(<span class="tok-str">"/{id}"</span>)                 <span class="tok-com">// GET /api/products/42</span>
+    <span class="tok-kw">public</span> <span class="tok-cls">Product</span> <span class="tok-fn">get</span>(<span class="tok-ann">@PathVariable</span> <span class="tok-kw">long</span> id) {
+        <span class="tok-kw">return</span> service.<span class="tok-fn">findById</span>(id);
+    }
+}</code></pre>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Annotation</th><th>HTTP</th><th>Dùng cho</th><th>Idempotent?</th></tr></thead>
+            <tbody>
+              <tr><td><code>@GetMapping</code></td><td>GET</td><td>Đọc tài nguyên</td><td>✅ (và an toàn)</td></tr>
+              <tr><td><code>@PostMapping</code></td><td>POST</td><td>Tạo mới / hành động</td><td>❌</td></tr>
+              <tr><td><code>@PutMapping</code></td><td>PUT</td><td><strong>Thay thế toàn bộ</strong> tài nguyên</td><td>✅</td></tr>
+              <tr><td><code>@PatchMapping</code></td><td>PATCH</td><td>Cập nhật <strong>một phần</strong></td><td>Tuỳ thiết kế</td></tr>
+              <tr><td><code>@DeleteMapping</code></td><td>DELETE</td><td>Xoá</td><td>✅</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="java-note">
+          <h4><code>@Controller</code> hay <code>@RestController</code>?</h4>
+          <p><code>@Controller</code> trả về <em>tên view</em> (Thymeleaf/JSP — web server-side rendering). <code>@RestController</code> trả về <em>dữ liệu</em> ghi thẳng vào body, dùng cho API. Với kiến trúc SPA (React/Vue) + API, bạn gần như chỉ dùng <code>@RestController</code>.</p>
+        </div>
+
+        <h2 id="nhan-du-lieu">3. Nhận dữ liệu từ request</h2>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Nguồn</th><th>Annotation</th><th>Ví dụ URL / request</th></tr></thead>
+            <tbody>
+              <tr><td>Đường dẫn</td><td><code>@PathVariable</code></td><td><code>/products/42</code> → <code>id = 42</code></td></tr>
+              <tr><td>Query string</td><td><code>@RequestParam</code></td><td><code>/products?category=sach&amp;page=2</code></td></tr>
+              <tr><td>Body (JSON)</td><td><code>@RequestBody</code></td><td><code>POST</code> với <code>{"name":"Java","price":99000}</code></td></tr>
+              <tr><td>Header</td><td><code>@RequestHeader</code></td><td><code>Authorization</code>, <code>X-Request-Id</code>, <code>Accept-Language</code></td></tr>
+              <tr><td>Cookie</td><td><code>@CookieValue</code></td><td><code>session=abc</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Nhận dữ liệu</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@GetMapping</span>(<span class="tok-str">"/{id}"</span>)
+<span class="tok-kw">public</span> <span class="tok-cls">Product</span> <span class="tok-fn">get</span>(<span class="tok-ann">@PathVariable</span> <span class="tok-kw">long</span> id) { ... }
+
+<span class="tok-ann">@GetMapping</span>(<span class="tok-str">"/{shopId}/products/{productId}"</span>)                        <span class="tok-com">// nhiều biến đường dẫn</span>
+<span class="tok-kw">public</span> <span class="tok-cls">Product</span> <span class="tok-fn">get</span>(<span class="tok-ann">@PathVariable</span> <span class="tok-kw">long</span> shopId, <span class="tok-ann">@PathVariable</span>(<span class="tok-str">"productId"</span>) <span class="tok-kw">long</span> pid) { ... }
+
+<span class="tok-ann">@GetMapping</span>
+<span class="tok-kw">public</span> <span class="tok-cls">List</span>&lt;<span class="tok-cls">Product</span>&gt; <span class="tok-fn">search</span>(
+        <span class="tok-ann">@RequestParam</span>(required = <span class="tok-kw">false</span>) <span class="tok-cls">String</span> category,             <span class="tok-com">// tuỳ chọn → null nếu thiếu</span>
+        <span class="tok-ann">@RequestParam</span>(defaultValue = <span class="tok-str">"0"</span>) <span class="tok-kw">int</span> page,                  <span class="tok-com">// có mặc định</span>
+        <span class="tok-ann">@RequestParam</span>(defaultValue = <span class="tok-str">"20"</span>) <span class="tok-kw">int</span> size,
+        <span class="tok-ann">@RequestHeader</span>(value = <span class="tok-str">"X-Request-Id"</span>, required = <span class="tok-kw">false</span>) <span class="tok-cls">String</span> requestId) { ... }
+
+<span class="tok-com">// Body: record là DTO gọn nhất</span>
+<span class="tok-kw">public</span> <span class="tok-kw">record</span> <span class="tok-cls">CreateProductRequest</span>(<span class="tok-cls">String</span> name, <span class="tok-kw">long</span> price, <span class="tok-cls">String</span> category) { }
+
+<span class="tok-ann">@PostMapping</span>
+<span class="tok-kw">public</span> <span class="tok-cls">Product</span> <span class="tok-fn">create</span>(<span class="tok-ann">@RequestBody</span> <span class="tok-cls">CreateProductRequest</span> req) { ... }</code></pre>
+        </div>
+        <div class="callout callout-tip">
+          <div class="callout-label">💡 Dùng DTO, đừng nhận thẳng entity</div>
+          <p><code>@RequestBody</code> nhận <strong>DTO</strong> (record) riêng cho từng use case (<code>CreateProductRequest</code>, <code>UpdateProductRequest</code>), không nhận entity của CSDL. Nếu không, client có thể ghi đè trường như <code>id</code>, <code>createdAt</code>, <code>role</code> (<em>mass assignment</em>). Chương 8 trình bày kiến trúc DTO đầy đủ.</p>
+        </div>
+        <p>Ghi chú tên tham số: Spring dùng tên biến Java làm tên tham số nếu bạn không ghi rõ (cần biên dịch với <code>-parameters</code>, Boot/Maven plugin đã bật sẵn). Ghi rõ <code>@PathVariable("id")</code> là cách an toàn khi tên API ≠ tên biến.</p>
+
+        <h2 id="tra-du-lieu">4. Trả dữ liệu đúng chuẩn HTTP</h2>
+
+        <p>Trả thẳng object thì Spring luôn dùng <code>200 OK</code>. Nhưng REST tử tế dùng <strong>mã trạng thái có ý nghĩa</strong>:</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Tình huống</th><th>Mã</th><th>Ghi chú</th></tr></thead>
+            <tbody>
+              <tr><td>Đọc / cập nhật thành công</td><td><strong>200 OK</strong></td><td>Có body</td></tr>
+              <tr><td>Tạo mới thành công</td><td><strong>201 Created</strong></td><td>Kèm header <code>Location: /api/products/43</code></td></tr>
+              <tr><td>Thành công, không có body</td><td><strong>204 No Content</strong></td><td>Thường cho <code>DELETE</code>, <code>PUT</code></td></tr>
+              <tr><td>Dữ liệu gửi lên sai</td><td><strong>400 Bad Request</strong></td><td>Thiếu trường, sai kiểu (chương 5)</td></tr>
+              <tr><td>Chưa đăng nhập</td><td><strong>401 Unauthorized</strong></td><td>Thiếu/hết hạn token</td></tr>
+              <tr><td>Đăng nhập rồi nhưng không đủ quyền</td><td><strong>403 Forbidden</strong></td><td>Khác 401!</td></tr>
+              <tr><td>Không tồn tại</td><td><strong>404 Not Found</strong></td><td></td></tr>
+              <tr><td>Xung đột trạng thái</td><td><strong>409 Conflict</strong></td><td>Trùng email, sai version (khoá lạc quan)</td></tr>
+              <tr><td>Lỗi validate nghiệp vụ</td><td><strong>422 Unprocessable Entity</strong></td><td>Đúng cú pháp nhưng sai luật (tuỳ quy ước đội)</td></tr>
+              <tr><td>Lỗi server</td><td><strong>500</strong></td><td>Không phải lỗi của client — đừng trả để "cho qua"</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Tạo mới + Location</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@PostMapping</span>
+<span class="tok-kw">public</span> <span class="tok-cls">ResponseEntity</span>&lt;<span class="tok-cls">Product</span>&gt; <span class="tok-fn">create</span>(<span class="tok-ann">@RequestBody</span> <span class="tok-cls">CreateProductRequest</span> req) {
+    <span class="tok-cls">Product</span> saved = service.<span class="tok-fn">create</span>(req);
+
+    <span class="tok-cls">URI</span> location = <span class="tok-cls">ServletUriComponentsBuilder</span>.<span class="tok-fn">fromCurrentRequest</span>()   <span class="tok-com">// http://host/api/products</span>
+            .<span class="tok-fn">path</span>(<span class="tok-str">"/{id}"</span>).<span class="tok-fn">buildAndExpand</span>(saved.<span class="tok-fn">id</span>()).<span class="tok-fn">toUri</span>();        <span class="tok-com">// + /43</span>
+
+    <span class="tok-kw">return</span> <span class="tok-cls">ResponseEntity</span>.<span class="tok-fn">created</span>(location).<span class="tok-fn">body</span>(saved);              <span class="tok-com">// 201 + Location + body</span>
+}
+
+<span class="tok-ann">@DeleteMapping</span>(<span class="tok-str">"/{id}"</span>)
+<span class="tok-ann">@ResponseStatus</span>(<span class="tok-cls">HttpStatus</span>.<span class="tok-cls">NO_CONTENT</span>)                                <span class="tok-com">// 204 — không cần ResponseEntity</span>
+<span class="tok-kw">public</span> <span class="tok-kw">void</span> <span class="tok-fn">delete</span>(<span class="tok-ann">@PathVariable</span> <span class="tok-kw">long</span> id) {
+    service.<span class="tok-fn">delete</span>(id);
+}
+
+<span class="tok-ann">@GetMapping</span>(<span class="tok-str">"/{id}"</span>)
+<span class="tok-kw">public</span> <span class="tok-cls">ResponseEntity</span>&lt;<span class="tok-cls">Product</span>&gt; <span class="tok-fn">get</span>(<span class="tok-ann">@PathVariable</span> <span class="tok-kw">long</span> id) {
+    <span class="tok-kw">return</span> service.<span class="tok-fn">findById</span>(id)                                       <span class="tok-com">// Optional&lt;Product&gt;</span>
+            .<span class="tok-fn">map</span>(<span class="tok-cls">ResponseEntity</span>::ok)                                  <span class="tok-com">// 200</span>
+            .<span class="tok-fn">orElseGet</span>(() -&gt; <span class="tok-cls">ResponseEntity</span>.<span class="tok-fn">notFound</span>().<span class="tok-fn">build</span>());      <span class="tok-com">// 404</span>
+}</code></pre>
+        </div>
+
+        <h3 id="put-patch">4.1. PUT khác PATCH</h3>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th></th><th>PUT</th><th>PATCH</th></tr></thead>
+            <tbody>
+              <tr><td>Ngữ nghĩa</td><td><strong>Thay thế</strong> toàn bộ tài nguyên</td><td><strong>Sửa một phần</strong></td></tr>
+              <tr><td>Body</td><td>Phải đủ mọi trường</td><td>Chỉ trường cần đổi</td></tr>
+              <tr><td>Trường thiếu</td><td>Coi như <code>null</code>/mặc định</td><td>Giữ nguyên giá trị cũ</td></tr>
+              <tr><td>Idempotent</td><td>Có</td><td>Nên thiết kế để có</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout callout-gotcha">
+          <div class="callout-label">⚠️ Bẫy với PATCH</div>
+          <p>Với <code>record UpdateRequest(String name, Long price)</code>, "client không gửi <code>price</code>" và "client gửi <code>price: null</code>" **cùng cho <code>null</code><em>* — không phân biệt được ý định *giữ nguyên</em> hay <em>xoá</em>. Hầu hết API chấp nhận quy ước "<code>null</code> = không đổi"; nếu cần phân biệt thật, dùng JSON Merge Patch (<code>Map&lt;String, Object&gt;</code>) hoặc <code>JsonNullable</code>.</p>
+        </div>
+
+        <h2 id="jackson">5. Jackson — chuyển đổi JSON ↔ object</h2>
+
+        <p><code>spring-boot-starter-web</code> kèm <strong>Jackson</strong>; Boot tự cấu hình <code>ObjectMapper</code> với module <code>jackson-datatype-jsr310</code> (hỗ trợ <code>java.time</code>). Vài tuỳ biến thường gặp:</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>ProductDto.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-kw">public</span> <span class="tok-kw">record</span> <span class="tok-cls">ProductDto</span>(
+        <span class="tok-kw">long</span> id,
+        <span class="tok-cls">String</span> name,
+
+        <span class="tok-ann">@JsonProperty</span>(<span class="tok-str">"unit_price"</span>)                         <span class="tok-com">// tên trường trong JSON khác tên trong Java</span>
+        <span class="tok-kw">long</span> price,
+
+        <span class="tok-ann">@JsonIgnore</span>                                         <span class="tok-com">// không bao giờ ra JSON</span>
+        <span class="tok-cls">String</span> internalCode,
+
+        <span class="tok-ann">@JsonFormat</span>(pattern = <span class="tok-str">"dd/MM/yyyy"</span>)                 <span class="tok-com">// chỉ định định dạng ngày cho field này</span>
+        <span class="tok-cls">LocalDate</span> releaseDate,
+
+        <span class="tok-ann">@JsonInclude</span>(<span class="tok-cls">JsonInclude</span>.<span class="tok-cls">Include</span>.<span class="tok-cls">NON_NULL</span>)          <span class="tok-com">// bỏ khỏi JSON nếu null</span>
+        <span class="tok-cls">String</span> description) { }</code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>application.yml</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-cls">spring</span>:
+  <span class="tok-cls">jackson</span>:
+    <span class="tok-cls">property-naming-strategy</span>: SNAKE_CASE<span class="tok-com">         # toàn bộ API dùng snake_case: unit_price, release_date...</span>
+    <span class="tok-cls">default-property-inclusion</span>: non_null<span class="tok-com">         # bỏ mọi trường null</span>
+    <span class="tok-cls">serialization</span>:
+      <span class="tok-cls">write-dates-as-timestamps</span>: <span class="tok-kw">false</span><span class="tok-com">           # LocalDate → "2025-03-01" thay vì [2025,3,1]</span>
+    <span class="tok-cls">deserialization</span>:
+      <span class="tok-cls">fail-on-unknown-properties</span>: <span class="tok-kw">false</span><span class="tok-com">          # client gửi thừa trường → bỏ qua (mặc định của Boot)</span></code></pre>
+        </div>
+        <div class="callout callout-tip">
+          <div class="callout-label">💡 Quyết định naming một lần</div>
+          <p>Chọn <strong>camelCase</strong> hay <strong>snake_case</strong> cho toàn API và cấu hình ở một chỗ (<code>property-naming-strategy</code>). API vừa <code>unitPrice</code> vừa <code>unit_price</code> là mùi thiết kế tệ. Frontend JS thường thích camelCase; hệ thống đa ngôn ngữ/Python thường dùng snake_case — chọn theo người tiêu thụ chính.</p>
+        </div>
+
+        <h2 id="api-hoan-chinh">6. Một API CRUD hoàn chỉnh (lưu trong bộ nhớ)</h2>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>ProductService.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Service</span>
+<span class="tok-kw">public</span> <span class="tok-kw">class</span> <span class="tok-cls">ProductService</span> {
+
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">Map</span>&lt;<span class="tok-cls">Long</span>, <span class="tok-cls">Product</span>&gt; store = <span class="tok-kw">new</span> <span class="tok-cls">ConcurrentHashMap</span>&lt;&gt;();   <span class="tok-com">// thread-safe (singleton!)</span>
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">AtomicLong</span> seq = <span class="tok-kw">new</span> <span class="tok-cls">AtomicLong</span>();
+
+    <span class="tok-kw">public</span> <span class="tok-cls">List</span>&lt;<span class="tok-cls">Product</span>&gt; <span class="tok-fn">findAll</span>() { <span class="tok-kw">return</span> <span class="tok-cls">List</span>.<span class="tok-fn">copyOf</span>(store.<span class="tok-fn">values</span>()); }
+
+    <span class="tok-kw">public</span> <span class="tok-cls">Optional</span>&lt;<span class="tok-cls">Product</span>&gt; <span class="tok-fn">findById</span>(<span class="tok-kw">long</span> id) { <span class="tok-kw">return</span> <span class="tok-cls">Optional</span>.<span class="tok-fn">ofNullable</span>(store.<span class="tok-fn">get</span>(id)); }
+
+    <span class="tok-kw">public</span> <span class="tok-cls">Product</span> <span class="tok-fn">create</span>(<span class="tok-cls">CreateProductRequest</span> r) {
+        <span class="tok-kw">long</span> id = seq.<span class="tok-fn">incrementAndGet</span>();
+        <span class="tok-cls">Product</span> p = <span class="tok-kw">new</span> <span class="tok-cls">Product</span>(id, r.<span class="tok-fn">name</span>(), r.<span class="tok-fn">price</span>());
+        store.<span class="tok-fn">put</span>(id, p);
+        <span class="tok-kw">return</span> p;
+    }
+
+    <span class="tok-kw">public</span> <span class="tok-cls">Optional</span>&lt;<span class="tok-cls">Product</span>&gt; <span class="tok-fn">replace</span>(<span class="tok-kw">long</span> id, <span class="tok-cls">CreateProductRequest</span> r) {
+        <span class="tok-kw">if</span> (!store.<span class="tok-fn">containsKey</span>(id)) <span class="tok-kw">return</span> <span class="tok-cls">Optional</span>.<span class="tok-fn">empty</span>();
+        <span class="tok-cls">Product</span> p = <span class="tok-kw">new</span> <span class="tok-cls">Product</span>(id, r.<span class="tok-fn">name</span>(), r.<span class="tok-fn">price</span>());
+        store.<span class="tok-fn">put</span>(id, p);
+        <span class="tok-kw">return</span> <span class="tok-cls">Optional</span>.<span class="tok-fn">of</span>(p);
+    }
+
+    <span class="tok-kw">public</span> <span class="tok-kw">boolean</span> <span class="tok-fn">delete</span>(<span class="tok-kw">long</span> id) { <span class="tok-kw">return</span> store.<span class="tok-fn">remove</span>(id) != <span class="tok-kw">null</span>; }
+}
+
+<span class="tok-kw">public</span> <span class="tok-kw">record</span> <span class="tok-cls">Product</span>(<span class="tok-kw">long</span> id, <span class="tok-cls">String</span> name, <span class="tok-kw">long</span> price) { }</code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>ProductController.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@RestController</span>
+<span class="tok-ann">@RequestMapping</span>(<span class="tok-str">"/api/products"</span>)
+<span class="tok-kw">public</span> <span class="tok-kw">class</span> <span class="tok-cls">ProductController</span> {
+
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">ProductService</span> service;
+    <span class="tok-kw">public</span> <span class="tok-cls">ProductController</span>(<span class="tok-cls">ProductService</span> service) { <span class="tok-kw">this</span>.service = service; }
+
+    <span class="tok-ann">@GetMapping</span>
+    <span class="tok-kw">public</span> <span class="tok-cls">List</span>&lt;<span class="tok-cls">Product</span>&gt; <span class="tok-fn">list</span>() { <span class="tok-kw">return</span> service.<span class="tok-fn">findAll</span>(); }
+
+    <span class="tok-ann">@GetMapping</span>(<span class="tok-str">"/{id}"</span>)
+    <span class="tok-kw">public</span> <span class="tok-cls">Product</span> <span class="tok-fn">get</span>(<span class="tok-ann">@PathVariable</span> <span class="tok-kw">long</span> id) {
+        <span class="tok-kw">return</span> service.<span class="tok-fn">findById</span>(id).<span class="tok-fn">orElseThrow</span>(
+                () -&gt; <span class="tok-kw">new</span> <span class="tok-cls">ResponseStatusException</span>(<span class="tok-cls">HttpStatus</span>.<span class="tok-cls">NOT_FOUND</span>, <span class="tok-str">"Không có sản phẩm "</span> + id));
+    }
+
+    <span class="tok-ann">@PostMapping</span>
+    <span class="tok-kw">public</span> <span class="tok-cls">ResponseEntity</span>&lt;<span class="tok-cls">Product</span>&gt; <span class="tok-fn">create</span>(<span class="tok-ann">@RequestBody</span> <span class="tok-cls">CreateProductRequest</span> req) {
+        <span class="tok-cls">Product</span> p = service.<span class="tok-fn">create</span>(req);
+        <span class="tok-cls">URI</span> uri = <span class="tok-cls">ServletUriComponentsBuilder</span>.<span class="tok-fn">fromCurrentRequest</span>().<span class="tok-fn">path</span>(<span class="tok-str">"/{id}"</span>).<span class="tok-fn">buildAndExpand</span>(p.<span class="tok-fn">id</span>()).<span class="tok-fn">toUri</span>();
+        <span class="tok-kw">return</span> <span class="tok-cls">ResponseEntity</span>.<span class="tok-fn">created</span>(uri).<span class="tok-fn">body</span>(p);
+    }
+
+    <span class="tok-ann">@PutMapping</span>(<span class="tok-str">"/{id}"</span>)
+    <span class="tok-kw">public</span> <span class="tok-cls">Product</span> <span class="tok-fn">replace</span>(<span class="tok-ann">@PathVariable</span> <span class="tok-kw">long</span> id, <span class="tok-ann">@RequestBody</span> <span class="tok-cls">CreateProductRequest</span> req) {
+        <span class="tok-kw">return</span> service.<span class="tok-fn">replace</span>(id, req).<span class="tok-fn">orElseThrow</span>(
+                () -&gt; <span class="tok-kw">new</span> <span class="tok-cls">ResponseStatusException</span>(<span class="tok-cls">HttpStatus</span>.<span class="tok-cls">NOT_FOUND</span>));
+    }
+
+    <span class="tok-ann">@DeleteMapping</span>(<span class="tok-str">"/{id}"</span>)
+    <span class="tok-ann">@ResponseStatus</span>(<span class="tok-cls">HttpStatus</span>.<span class="tok-cls">NO_CONTENT</span>)
+    <span class="tok-kw">public</span> <span class="tok-kw">void</span> <span class="tok-fn">delete</span>(<span class="tok-ann">@PathVariable</span> <span class="tok-kw">long</span> id) {
+        <span class="tok-kw">if</span> (!service.<span class="tok-fn">delete</span>(id)) <span class="tok-kw">throw</span> <span class="tok-kw">new</span> <span class="tok-cls">ResponseStatusException</span>(<span class="tok-cls">HttpStatus</span>.<span class="tok-cls">NOT_FOUND</span>);
+    }
+}</code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Thử bằng curl</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-fn">curl</span> <span class="tok-kw">-i</span> <span class="tok-kw">-X</span> POST localhost:8080/api/products \
+     <span class="tok-fn">-H</span> <span class="tok-str">"Content-Type: application/json"</span> \
+     <span class="tok-fn">-d</span> <span class="tok-str">'{"name":"Java 21","price":99000}'</span>
+<span class="tok-com"># HTTP/1.1 201</span>
+<span class="tok-com"># Location: http://localhost:8080/api/products/1</span>
+<span class="tok-com"># {"id":1,"name":"Java 21","price":99000}</span>
+
+<span class="tok-fn">curl</span> <span class="tok-kw">-i</span> localhost:8080/api/products/1       <span class="tok-com"> # 200</span>
+<span class="tok-fn">curl</span> <span class="tok-kw">-i</span> localhost:8080/api/products/99      <span class="tok-com"> # 404</span>
+<span class="tok-fn">curl</span> <span class="tok-kw">-i</span> <span class="tok-kw">-X</span> DELETE localhost:8080/api/products/1  <span class="tok-com"> # 204</span></code></pre>
+        </div>
+        <p><code>ResponseStatusException</code> là cách nhanh để trả mã lỗi; chương 5 thay nó bằng exception riêng + <code>@ControllerAdvice</code> để có định dạng lỗi thống nhất.</p>
+
+        <h2 id="content-negotiation">7. Content negotiation, upload &amp; download</h2>
+
+
+        <h3 id="negotiation">7.1. Content negotiation</h3>
+
+        <p>Client nói nó muốn gì bằng header <code>Accept</code> và gửi gì bằng <code>Content-Type</code>; Spring chọn <code>HttpMessageConverter</code> tương ứng. Có thể ràng buộc:</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>produces / consumes</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@PostMapping</span>(consumes = <span class="tok-cls">MediaType</span>.<span class="tok-cls">APPLICATION_JSON_VALUE</span>,
+             produces = <span class="tok-cls">MediaType</span>.<span class="tok-cls">APPLICATION_JSON_VALUE</span>)
+<span class="tok-kw">public</span> <span class="tok-cls">Product</span> <span class="tok-fn">create</span>(<span class="tok-ann">@RequestBody</span> <span class="tok-cls">CreateProductRequest</span> req) { ... }
+<span class="tok-com">// Content-Type khác JSON  → 415 Unsupported Media Type</span>
+<span class="tok-com">// Accept không chứa JSON  → 406 Not Acceptable</span></code></pre>
+        </div>
+
+        <h3 id="upload">7.2. Upload file</h3>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>FileController.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@PostMapping</span>(path = <span class="tok-str">"/api/files"</span>, consumes = <span class="tok-cls">MediaType</span>.<span class="tok-cls">MULTIPART_FORM_DATA_VALUE</span>)
+<span class="tok-kw">public</span> <span class="tok-cls">Map</span>&lt;<span class="tok-cls">String</span>, <span class="tok-cls">Object</span>&gt; <span class="tok-fn">upload</span>(<span class="tok-ann">@RequestParam</span>(<span class="tok-str">"file"</span>) <span class="tok-cls">MultipartFile</span> file) <span class="tok-kw">throws</span> <span class="tok-cls">IOException</span> {
+    <span class="tok-kw">if</span> (file.<span class="tok-fn">isEmpty</span>()) <span class="tok-kw">throw</span> <span class="tok-kw">new</span> <span class="tok-cls">ResponseStatusException</span>(<span class="tok-cls">HttpStatus</span>.<span class="tok-cls">BAD_REQUEST</span>, <span class="tok-str">"File rỗng"</span>);
+    <span class="tok-kw">if</span> (!<span class="tok-str">"image/png"</span>.<span class="tok-fn">equals</span>(file.<span class="tok-fn">getContentType</span>()))
+        <span class="tok-kw">throw</span> <span class="tok-kw">new</span> <span class="tok-cls">ResponseStatusException</span>(<span class="tok-cls">HttpStatus</span>.<span class="tok-cls">UNSUPPORTED_MEDIA_TYPE</span>, <span class="tok-str">"Chỉ nhận PNG"</span>);
+
+    <span class="tok-cls">Path</span> dir = <span class="tok-cls">Path</span>.<span class="tok-fn">of</span>(<span class="tok-str">"uploads"</span>);
+    <span class="tok-cls">Files</span>.<span class="tok-fn">createDirectories</span>(dir);
+    <span class="tok-com">// KHÔNG dùng file.getOriginalFilename() làm tên file: có thể là "../../etc/passwd"</span>
+    <span class="tok-cls">Path</span> dest = dir.<span class="tok-fn">resolve</span>(<span class="tok-cls">UUID</span>.<span class="tok-fn">randomUUID</span>() + <span class="tok-str">".png"</span>);
+    file.<span class="tok-fn">transferTo</span>(dest);
+    <span class="tok-kw">return</span> <span class="tok-cls">Map</span>.<span class="tok-fn">of</span>(<span class="tok-str">"name"</span>, dest.<span class="tok-fn">getFileName</span>().<span class="tok-fn">toString</span>(), <span class="tok-str">"size"</span>, file.<span class="tok-fn">getSize</span>());
+}</code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>application.yml</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-cls">spring</span>:
+  <span class="tok-cls">servlet</span>:
+    <span class="tok-cls">multipart</span>:
+      <span class="tok-cls">max-file-size</span>: 5MB
+      <span class="tok-cls">max-request-size</span>: 10MB<span class="tok-com">            # vượt → 413 Payload Too Large</span></code></pre>
+        </div>
+        <div class="callout callout-warning">
+          <div class="callout-label">🔒 Quy tắc an toàn khi nhận file</div>
+          <p>(1) Giới hạn kích thước; (2) kiểm tra loại bằng nội dung chứ không chỉ <code>Content-Type</code> (client nói dối được); (3) <strong>tự sinh tên file</strong>, không tin tên người dùng gửi (<em>path traversal</em>); (4) lưu ngoài thư mục được phục vụ tĩnh; (5) production nên đẩy lên object storage (S3/GCS) thay vì ổ đĩa của server.</p>
+        </div>
+
+        <h3 id="download">7.3. Download</h3>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>Tải file</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@GetMapping</span>(<span class="tok-str">"/api/files/{name}"</span>)
+<span class="tok-kw">public</span> <span class="tok-cls">ResponseEntity</span>&lt;<span class="tok-cls">Resource</span>&gt; <span class="tok-fn">download</span>(<span class="tok-ann">@PathVariable</span> <span class="tok-cls">String</span> name) {
+    <span class="tok-cls">Resource</span> file = <span class="tok-kw">new</span> <span class="tok-cls">FileSystemResource</span>(<span class="tok-cls">Path</span>.<span class="tok-fn">of</span>(<span class="tok-str">"uploads"</span>).<span class="tok-fn">resolve</span>(name).<span class="tok-fn">normalize</span>());
+    <span class="tok-kw">if</span> (!file.<span class="tok-fn">exists</span>()) <span class="tok-kw">return</span> <span class="tok-cls">ResponseEntity</span>.<span class="tok-fn">notFound</span>().<span class="tok-fn">build</span>();
+    <span class="tok-kw">return</span> <span class="tok-cls">ResponseEntity</span>.<span class="tok-fn">ok</span>()
+            .<span class="tok-fn">contentType</span>(<span class="tok-cls">MediaType</span>.<span class="tok-cls">IMAGE_PNG</span>)
+            .<span class="tok-fn">header</span>(<span class="tok-cls">HttpHeaders</span>.<span class="tok-cls">CONTENT_DISPOSITION</span>, <span class="tok-str">"attachment; filename=\""</span> + name + <span class="tok-str">"\""</span>)
+            .<span class="tok-fn">body</span>(file);
+}</code></pre>
+        </div>
+
+        <h2 id="filter-interceptor">8. Filter, Interceptor, <code>@ControllerAdvice</code> — ai ở đâu?</h2>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th></th><th>Servlet <code>Filter</code></th><th><code>HandlerInterceptor</code></th><th><code>@ControllerAdvice</code></th></tr></thead>
+            <tbody>
+              <tr><td>Thuộc về</td><td>Servlet container (Jakarta)</td><td>Spring MVC</td><td>Spring MVC</td></tr>
+              <tr><td>Chạy khi</td><td><strong>Trước</strong> <code>DispatcherServlet</code></td><td>Trước/sau <strong>controller</strong></td><td>Khi controller ném exception / để chỉnh response</td></tr>
+              <tr><td>Biết controller nào xử lý?</td><td>❌</td><td>✅ (đối tượng <code>handler</code>)</td><td>✅</td></tr>
+              <tr><td>Dùng cho</td><td>Security, CORS, nén, log mọi request (kể cả static)</td><td>Đo thời gian, gắn <code>requestId</code>, kiểm tra quyền theo endpoint</td><td>Chuyển exception → JSON lỗi (chương 5)</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>RequestIdFilter.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Component</span>
+<span class="tok-kw">class</span> <span class="tok-cls">RequestIdFilter</span> <span class="tok-kw">extends</span> <span class="tok-cls">OncePerRequestFilter</span> {          <span class="tok-com">// chạy đúng 1 lần/request</span>
+
+    <span class="tok-ann">@Override</span>
+    <span class="tok-kw">protected</span> <span class="tok-kw">void</span> <span class="tok-fn">doFilterInternal</span>(<span class="tok-cls">HttpServletRequest</span> req, <span class="tok-cls">HttpServletResponse</span> res, <span class="tok-cls">FilterChain</span> chain)
+            <span class="tok-kw">throws</span> <span class="tok-cls">ServletException</span>, <span class="tok-cls">IOException</span> {
+        <span class="tok-cls">String</span> id = <span class="tok-cls">Optional</span>.<span class="tok-fn">ofNullable</span>(req.<span class="tok-fn">getHeader</span>(<span class="tok-str">"X-Request-Id"</span>)).<span class="tok-fn">orElse</span>(<span class="tok-cls">UUID</span>.<span class="tok-fn">randomUUID</span>().<span class="tok-fn">toString</span>());
+        <span class="tok-cls">MDC</span>.<span class="tok-fn">put</span>(<span class="tok-str">"requestId"</span>, id);                              <span class="tok-com">// log pattern %X{requestId} sẽ in ra</span>
+        res.<span class="tok-fn">setHeader</span>(<span class="tok-str">"X-Request-Id"</span>, id);
+        <span class="tok-kw">try</span> {
+            chain.<span class="tok-fn">doFilter</span>(req, res);                          <span class="tok-com">// chuyển tiếp xuống dưới</span>
+        } <span class="tok-kw">finally</span> {
+            <span class="tok-cls">MDC</span>.<span class="tok-fn">clear</span>();                                       <span class="tok-com">// luôn dọn — thread được tái sử dụng</span>
+        }
+    }
+}</code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>TimingInterceptor.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Component</span>
+<span class="tok-kw">class</span> <span class="tok-cls">TimingInterceptor</span> <span class="tok-kw">implements</span> <span class="tok-cls">HandlerInterceptor</span> {
+
+    <span class="tok-ann">@Override</span> <span class="tok-kw">public</span> <span class="tok-kw">boolean</span> <span class="tok-fn">preHandle</span>(<span class="tok-cls">HttpServletRequest</span> req, <span class="tok-cls">HttpServletResponse</span> res, <span class="tok-cls">Object</span> handler) {
+        req.<span class="tok-fn">setAttribute</span>(<span class="tok-str">"t0"</span>, <span class="tok-cls">System</span>.<span class="tok-fn">nanoTime</span>());
+        <span class="tok-kw">return</span> <span class="tok-kw">true</span>;                                           <span class="tok-com">// false = chặn request</span>
+    }
+
+    <span class="tok-ann">@Override</span> <span class="tok-kw">public</span> <span class="tok-kw">void</span> <span class="tok-fn">afterCompletion</span>(<span class="tok-cls">HttpServletRequest</span> req, <span class="tok-cls">HttpServletResponse</span> res, <span class="tok-cls">Object</span> handler, <span class="tok-cls">Exception</span> ex) {
+        <span class="tok-kw">long</span> ms = (<span class="tok-cls">System</span>.<span class="tok-fn">nanoTime</span>() - (<span class="tok-kw">long</span>) req.<span class="tok-fn">getAttribute</span>(<span class="tok-str">"t0"</span>)) / <span class="tok-num">1_000_000</span>;
+        <span class="tok-cls">LoggerFactory</span>.<span class="tok-fn">getLogger</span>(<span class="tok-str">"timing"</span>).<span class="tok-fn">info</span>(<span class="tok-str">"{} {} -&gt; {} ({} ms)"</span>, req.<span class="tok-fn">getMethod</span>(), req.<span class="tok-fn">getRequestURI</span>(), res.<span class="tok-fn">getStatus</span>(), ms);
+    }
+}
+
+<span class="tok-ann">@Configuration</span>
+<span class="tok-kw">class</span> <span class="tok-cls">WebConfig</span> <span class="tok-kw">implements</span> <span class="tok-cls">WebMvcConfigurer</span> {
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">TimingInterceptor</span> timing;
+    <span class="tok-cls">WebConfig</span>(<span class="tok-cls">TimingInterceptor</span> timing) { <span class="tok-kw">this</span>.timing = timing; }
+
+    <span class="tok-ann">@Override</span> <span class="tok-kw">public</span> <span class="tok-kw">void</span> <span class="tok-fn">addInterceptors</span>(<span class="tok-cls">InterceptorRegistry</span> registry) {
+        registry.<span class="tok-fn">addInterceptor</span>(timing).<span class="tok-fn">addPathPatterns</span>(<span class="tok-str">"/api/**"</span>);
+    }
+}</code></pre>
+        </div>
+
+        <h2 id="cors">9. CORS — frontend ở origin khác</h2>
+
+        <p>Trình duyệt chặn trang <code>http://localhost:3000</code> (React) gọi API ở <code>http://localhost:8080</code> trừ khi API cho phép bằng header CORS. Cấu hình tập trung (khi dùng Spring Security, đặt trong security config — chương 9):</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>WebConfig.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Override</span>
+<span class="tok-kw">public</span> <span class="tok-kw">void</span> <span class="tok-fn">addCorsMappings</span>(<span class="tok-cls">CorsRegistry</span> registry) {
+    registry.<span class="tok-fn">addMapping</span>(<span class="tok-str">"/api/**"</span>)
+            .<span class="tok-fn">allowedOrigins</span>(<span class="tok-str">"http://localhost:3000"</span>, <span class="tok-str">"https://shop.example.com"</span>)   <span class="tok-com">// KHÔNG dùng "*" khi có cookie/credential</span>
+            .<span class="tok-fn">allowedMethods</span>(<span class="tok-str">"GET"</span>, <span class="tok-str">"POST"</span>, <span class="tok-str">"PUT"</span>, <span class="tok-str">"PATCH"</span>, <span class="tok-str">"DELETE"</span>)
+            .<span class="tok-fn">allowedHeaders</span>(<span class="tok-str">"*"</span>)
+            .<span class="tok-fn">maxAge</span>(<span class="tok-num">3600</span>);
+}</code></pre>
+        </div>
+
+        <h2 id="cheat-sheet">10. Cheat sheet chương 4</h2>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Cần gì</th><th>Dùng</th></tr></thead>
+            <tbody>
+              <tr><td>Controller trả JSON</td><td><code>@RestController</code> + <code>@RequestMapping("/api/…")</code></td></tr>
+              <tr><td>Biến trong đường dẫn / query / body</td><td><code>@PathVariable</code> / <code>@RequestParam</code> / <code>@RequestBody</code></td></tr>
+              <tr><td>Tạo mới</td><td><code>POST</code> → <code>201</code> + <code>Location</code></td></tr>
+              <tr><td>Xoá</td><td><code>DELETE</code> → <code>204</code></td></tr>
+              <tr><td>Không thấy</td><td><code>404</code> (<code>ResponseStatusException</code> → chương 5: exception riêng)</td></tr>
+              <tr><td>Đổi tên/ẩn/định dạng trường JSON</td><td><code>@JsonProperty</code>, <code>@JsonIgnore</code>, <code>@JsonFormat</code>, <code>spring.jackson.*</code></td></tr>
+              <tr><td>Mọi request cần gắn requestId</td><td><code>OncePerRequestFilter</code></td></tr>
+              <tr><td>Frontend khác origin</td><td>CORS config (không <code>*</code> nếu có credential)</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="bai-tap">Bài tập</h2>
+
+        <div class="exercises">
+
+          <div class="exercise">
+            <h4>CRUD sách</h4>
+            <div class="exercise-body">
+              <p>Xây API <code>/api/books</code> (id, title, author, year) lưu trong <code>ConcurrentHashMap</code>. Đủ <code>GET</code> danh sách, <code>GET</code> theo id, <code>POST</code>, <code>PUT</code>, <code>DELETE</code>.</p>
+              <ul>
+                <li>Đúng mã: 201+<code>Location</code>, 204, 404.</li>
+                <li>Thêm lọc <code>GET /api/books?author=Nam&amp;year=2020</code> bằng <code>@RequestParam</code> tuỳ chọn.</li>
+                <li>Viết <code>.http</code> file hoặc script <code>curl</code> thử cả 5 thao tác.</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Lọc: dùng <code>stream().filter(...)</code> với điều kiện <code>author == null || b.author().equalsIgnoreCase(author)</code>. Nhớ rằng store là <code>ConcurrentHashMap</code> vì service là singleton.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Bảng mã trạng thái</h4>
+            <div class="exercise-body">
+              <p>Với API sách ở trên, ghi ra giấy mã trạng thái <em>đúng</em> cho từng tình huống, rồi kiểm chứng bằng <code>curl -i</code>:</p>
+              <ul>
+                <li>Tạo sách thành công; tạo sách trùng ISBN.</li>
+                <li>Xoá sách không tồn tại; xoá hai lần liên tiếp (idempotent?).</li>
+                <li>Gọi <code>POST</code> với <code>Content-Type: text/plain</code>.</li>
+                <li>Gọi <code>GET /api/books/abc</code> (id không phải số).</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>201; 409. 404 (hoặc 204 nếu coi xoá idempotent — hãy chọn <em>một</em> quy ước và ghi vào tài liệu API). 415. Với <code>abc</code>: <code>MethodArgumentTypeMismatchException</code> ⇒ Boot trả 400 — chương 5 sẽ chuẩn hoá nội dung lỗi.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Tuỳ biến JSON</h4>
+            <div class="exercise-body">
+              <p>Cho <code>record Book(long id, String title, String authorName, LocalDate publishedAt, String internalNote)</code>.</p>
+              <ul>
+                <li>JSON ra: <code>book_title</code>, <code>author_name</code>; ngày dạng <code>dd/MM/yyyy</code>; <strong>không</strong> chứa <code>internalNote</code>.</li>
+                <li>Làm 2 lần: (a) bằng annotation trên record, (b) toàn cục bằng <code>spring.jackson.*</code>. Khi nào chọn cách nào?</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>(a) <code>@JsonProperty</code>, <code>@JsonFormat</code>, <code>@JsonIgnore</code> — đặc thù từng DTO. (b) <code>property-naming-strategy: SNAKE_CASE</code> — nhất quán toàn API. Thường kết hợp: (b) cho quy ước chung, (a) cho ngoại lệ.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Request ID &amp; thời gian xử lý</h4>
+            <div class="exercise-body">
+              <p>Viết <code>OncePerRequestFilter</code> gắn <code>X-Request-Id</code> (nhận từ client hoặc tự sinh) vào response <em>và</em> vào log (MDC), và <code>HandlerInterceptor</code> log <code>METHOD URI -&gt; status (ms)</code>.</p>
+              <ul>
+                <li>Sửa <code>logging.pattern.level</code> để in <code>%X{requestId}</code>.</li>
+                <li>Gọi 3 request — các dòng log cùng request phải có cùng requestId.</li>
+                <li>Vì sao phải <code>MDC.clear()</code> trong <code>finally</code>?</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p><code>logging.pattern.level: "%5p [%X{requestId}]"</code>. Container tái sử dụng thread trong pool ⇒ không <code>clear</code> thì requestId cũ rò sang request khác (log sai, nguy hiểm khi điều tra sự cố).</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Upload ảnh an toàn</h4>
+            <div class="exercise-body">
+              <p>Viết <code>POST /api/avatars</code> nhận ảnh PNG/JPEG ≤ 2 MB, lưu vào <code>uploads/</code>, trả về URL tải.</p>
+              <ul>
+                <li>Tên file do server sinh.</li>
+                <li>Từ chối file không phải ảnh <strong>bằng cách đọc magic bytes</strong> (<code>89 50 4E 47</code> cho PNG; <code>FF D8 FF</code> cho JPEG), không chỉ tin <code>Content-Type</code>.</li>
+                <li>Viết endpoint <code>GET /api/avatars/{name}</code> và thử <code>..%2F..%2Fpom.xml</code> — chuyện gì xảy ra? Chặn thế nào?</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Chặn path traversal: <code>Path p = dir.resolve(name).normalize(); if (!p.startsWith(dir)) throw 400/404</code>. Tốt hơn: chỉ chấp nhận tên khớp regex <code>[0-9a-f-]{36}\\.(png|jpg)</code>.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+        </div>
+
+        <h2 id="quiz">Quiz</h2>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q1</span>
+            <div class="quiz-q-text"><p>Mô tả đường đi của một request trong Spring MVC.</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Tomcat → các <code>Filter</code> → **<code>DispatcherServlet</code>** → <code>HandlerMapping</code> (tìm method) → interceptor <code>preHandle</code> → giải tham số (<code>HttpMessageConverter</code> đọc JSON) → <strong>method controller</strong> → <code>HttpMessageConverter</code> ghi JSON → interceptor <code>postHandle</code>/<code>afterCompletion</code> → response. Exception ở giữa → <code>@ControllerAdvice</code>.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q2</span>
+            <div class="quiz-q-text"><p><code>PUT</code> khác <code>PATCH</code> thế nào? Khi nào dùng cái nào?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p><code>PUT</code> <strong>thay thế toàn bộ</strong> tài nguyên (body phải đủ trường, idempotent); <code>PATCH</code> <strong>sửa một phần</strong>. Dùng <code>PUT</code> khi client có sẵn toàn bộ đối tượng (form chỉnh sửa đầy đủ); <code>PATCH</code> khi chỉ đổi vài trường (đổi trạng thái, đổi tên).</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q3</span>
+            <div class="quiz-q-text"><p>Tạo mới nên trả mã nào và kèm gì?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p><strong>201 Created</strong>, kèm header **<code>Location</code>** trỏ tới tài nguyên mới, và (thường) body là tài nguyên vừa tạo. Không trả 200 rồi để client tự đoán id.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q4</span>
+            <div class="quiz-q-text"><p>401 khác 403 thế nào?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p><strong>401</strong>: <em>chưa xác thực</em> (không có/hết hạn token) — "bạn là ai?". <strong>403</strong>: <em>đã xác thực nhưng không đủ quyền</em> — "tôi biết bạn, nhưng bạn không được làm vậy". Nhầm hai mã này là lỗi API rất phổ biến.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q5</span>
+            <div class="quiz-q-text"><p>Vì sao không nhận thẳng entity trong <code>@RequestBody</code>?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Client có thể gửi cả các trường nó không được phép đặt (<code>id</code>, <code>role</code>, <code>createdAt</code>…) — <strong>mass assignment</strong>. DTO riêng cho từng use case xác định đúng tập trường chấp nhận, tách biệt hợp đồng API khỏi mô hình CSDL (đổi bảng không vỡ API).</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q6</span>
+            <div class="quiz-q-text"><p>Filter và Interceptor khác nhau ở đâu?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p><strong>Filter</strong> thuộc Servlet container, chạy <em>trước</em> <code>DispatcherServlet</code>, không biết controller nào xử lý — hợp cho security, CORS, log toàn bộ. <strong>Interceptor</strong> thuộc Spring MVC, chạy quanh controller và biết <code>handler</code> — hợp cho đo thời gian, kiểm tra theo endpoint.</p>
+            </div>
+          </details>
+        </div>
+
+        <h2 id="tong-ket">Tổng kết</h2>
+
+        <p>Sau chương 4, bạn đã nắm:</p>
+        <ul>
+          <li>Luồng: **Tomcat → Filter → <code>DispatcherServlet</code> → HandlerMapping → controller → <code>HttpMessageConverter</code>**.</li>
+          <li>**<code>@RestController</code>** + <code>@GetMapping</code>/<code>@PostMapping</code>/<code>@PutMapping</code>/<code>@PatchMapping</code>/<code>@DeleteMapping</code>.</li>
+          <li>Nhận dữ liệu bằng **<code>@PathVariable</code><strong>, </strong><code>@RequestParam</code><strong>, </strong><code>@RequestBody</code><strong> (DTO/record), </strong><code>@RequestHeader</code>**.</li>
+          <li>Trả đúng mã: <strong>201+Location</strong>, <strong>204</strong>, <strong>404</strong>, <strong>409</strong>; <code>ResponseEntity</code> khi cần kiểm soát header/status.</li>
+          <li><strong>Jackson</strong>: <code>@JsonProperty</code>/<code>@JsonIgnore</code>/<code>@JsonFormat</code> hoặc cấu hình <code>spring.jackson.*</code> toàn cục.</li>
+          <li>**Filter / Interceptor / <code>@ControllerAdvice</code><strong> ở ba tầng khác nhau; </strong>upload file** cần giới hạn kích thước, tự sinh tên, kiểm tra nội dung.</li>
+        </ul>
+
+        <h2 id="ket-noi">Kết nối</h2>
+        <ul>
+          <li><strong>Chương 5</strong> — chuẩn hoá lỗi (<code>@ControllerAdvice</code>, <code>ProblemDetail</code>) và validation <code>@Valid</code>.</li>
+          <li><strong>Chương 8</strong> — DTO ↔ entity, phân trang, OpenAPI/Swagger, version API.</li>
+          <li><strong>Chương 9</strong> — Security chạy như một chuỗi <code>Filter</code> trước <code>DispatcherServlet</code>; CORS cấu hình ở đó.</li>
+          <li><strong>Networking chương 5 &amp; 8</strong> — HTTP (method, status, header) và các kiểu API (REST, GraphQL, gRPC).</li>
+          <li><strong>Fullstack-ContactCenter C1-C2</strong> — Express middleware &amp; thiết kế REST: đối chiếu với Filter/Interceptor.</li>
+          <li><strong>JavaScript chương 6</strong> — <code>fetch</code>/async phía frontend gọi chính các endpoint này.</li>
+        </ul>
+
+        <nav class="chapter-nav">
+          <a href="chuong3.html" class="prev">
+            <div class="dir">← Chương 3</div>
+            <div class="label">Cấu hình &amp;amp; Profiles</div>
+          </a>
+          <a href="chuong5.html" class="next">
+            <div class="dir">Chương 5 →</div>
+            <div class="label">Validation &amp;amp; xử lý lỗi</div>
+          </a>
+        </nav>
+
+      </main>
+
+      <aside class="toc">
+        <div class="toc-label">Trong chương này</div>
+        <ul>
+          <li><a href="#luong-request">1. Một request đi qua những gì?</a></li>
+          <li><a href="#controller">2. Controller đầu tiên</a></li>
+          <li><a href="#nhan-du-lieu">3. Nhận dữ liệu từ request</a></li>
+          <li><a href="#tra-du-lieu">4. Trả dữ liệu đúng chuẩn HTTP</a></li>
+          <li class="level-3"><a href="#put-patch">4.1. PUT khác PATCH</a></li>
+          <li><a href="#jackson">5. Jackson — chuyển đổi JSON ↔ object</a></li>
+          <li><a href="#api-hoan-chinh">6. Một API CRUD hoàn chỉnh (lưu trong bộ nhớ)</a></li>
+          <li><a href="#content-negotiation">7. Content negotiation, upload &amp; download</a></li>
+          <li class="level-3"><a href="#negotiation">7.1. Content negotiation</a></li>
+          <li class="level-3"><a href="#upload">7.2. Upload file</a></li>
+          <li class="level-3"><a href="#download">7.3. Download</a></li>
+          <li><a href="#filter-interceptor">8. Filter, Interceptor, <code>@ControllerAdvice</code> — ai ở đâu?</a></li>
+          <li><a href="#cors">9. CORS — frontend ở origin khác</a></li>
+          <li><a href="#cheat-sheet">10. Cheat sheet chương 4</a></li>
+          <li><a href="#bai-tap">Bài tập</a></li>
+          <li><a href="#quiz">Quiz</a></li>
+          <li><a href="#tong-ket">Tổng kết</a></li>
+          <li><a href="#ket-noi">Kết nối</a></li>
+        </ul>
+      </aside>
+
+    </div>
+  </div>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p>
+        Chương 4 — Spring MVC &amp;amp; REST API · Spring Boot sub-pillar · Pillar 9 IT Basic<br/>
+        <a href="chuong3.html">← Chương 3</a> · <a href="../index.html">Spring Boot TOC</a> · <a href="chuong5.html">Chương 5 →</a>
+      </p>
+    </div>
+  </footer>
+
+  <script src="../../shared/js/chapter.js"></script>
+</body>
+</html>

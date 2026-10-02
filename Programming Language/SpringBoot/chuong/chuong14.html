@@ -1,0 +1,790 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chương 14 — Docker, deploy &amp; dự án thực chiến — đưa Shop API lên chạy thật · Spring Boot Sub-pillar</title>
+  <meta name="description" content="Đóng gói Spring Boot bằng Docker multi-stage và Buildpacks, docker-compose, CI/CD với GitHub Actions, triển khai Kubernetes với probes và graceful shutdown, checklist production-readiness, GraalVM native image và dự án tổng hợp Shop API." />
+  <meta name="theme-color" content="#4a9a28" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Bitter:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="../../shared/css/base.css">
+  <link rel="stylesheet" href="../css/theme.css">
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="container">
+      <a class="site-logo" href="../../../index.html">
+        <span class="mark mark-spring">Sb</span>
+        Spring Boot · IT Basic
+      </a>
+      <nav>
+        <ul class="site-nav">
+          <li><a href="../../../index.html">IT Basic</a></li>
+          <li><a href="../../index.html">Pillar 9</a></li>
+          <li><a href="../../Java/index.html">Java</a></li>
+          <li><a href="../index.html" class="active">Spring Boot</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <div class="container">
+    <header class="chapter-header">
+      <div class="breadcrumb">
+        <a href="../../../index.html">IT Basic</a><span class="sep">/</span>
+        <a href="../../index.html">Pillar 9</a><span class="sep">/</span>
+        <a href="../index.html">Spring Boot</a><span class="sep">/</span>
+        <span>Chương 14</span>
+      </div>
+      <div class="chapter-num">Chương 14 · Deploy &amp; Capstone</div>
+      <h1 style="font-size: 2.6rem; margin: 0 0 12px; color: var(--ink);">
+        Docker, deploy &amp; dự án thực chiến — đưa Shop API lên chạy thật
+      </h1>
+      <p class="lead">
+        Mười ba chương trước dạy bạn <em>viết</em> một backend. Chương cuối dạy phần còn lại để nó <strong>sống ngoài máy bạn</strong>: đóng gói thành image, dựng môi trường bằng một lệnh, kiểm thử và triển khai tự động, chạy trên Kubernetes mà không rớt request khi cập nhật, và kiểm tra nó đã "sẵn sàng production" chưa. Cuối chương là <strong>dự án thực chiến</strong> — Shop API — ghép lại toàn bộ 14 chương thành một sản phẩm có đặc tả, tiêu chí nghiệm thu và checklist chất lượng.
+      </p>
+      <div class="chapter-meta">
+        <span class="item"><strong>Bài tập:</strong> 5</span>
+        <span class="item"><strong>Quiz:</strong> 6</span>
+        <span class="item"><strong>Prerequisites:</strong> Chương 1-13</span>
+      </div>
+    </header>
+
+    <div class="layout">
+
+      <main class="prose">
+
+        <div class="callout callout-goal">
+          <div class="callout-label">🎯 Mục tiêu chương</div>
+          <ul>
+            <li>Đóng gói bằng <strong>Dockerfile multi-stage</strong> (layered JAR, user không phải root) và <strong>Cloud Native Buildpacks</strong>.</li>
+            <li>Cấu hình JVM đúng cho <strong>container</strong> (bộ nhớ, CPU).</li>
+            <li>Dựng môi trường dev bằng <strong>docker-compose</strong> (app + PostgreSQL + Redis).</li>
+            <li>Viết pipeline <strong>CI/CD GitHub Actions</strong>: test → build → đẩy image → triển khai.</li>
+            <li>Triển khai lên <strong>Kubernetes</strong>: Deployment, ConfigMap/Secret, <strong>probes</strong>, <strong>graceful shutdown</strong>.</li>
+            <li>Áp dụng <strong>checklist production-readiness</strong> và chọn chiến lược triển khai <strong>không downtime</strong>.</li>
+            <li>Biết <strong>GraalVM native image</strong> đánh đổi gì.</li>
+            <li>Hoàn thành <strong>dự án Shop API</strong> ghép toàn bộ sub-pillar.</li>
+          </ul>
+        </div>
+
+        <h2 id="dong-goi">1. Từ JAR đến image</h2>
+
+        <p>Fat JAR (chương 1) đã chạy được bằng <code>java -jar</code>. <strong>Container image</strong> thêm: JRE đúng phiên bản, hệ điều hành tối giản, và khả năng chạy <em>y hệt</em> ở mọi nơi (máy bạn, CI, staging, production). Ba cách tạo image cho Spring Boot:</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Cách</th><th>Mô tả</th><th>Ưu</th><th>Nhược</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Dockerfile multi-stage</strong></td><td>Bạn kiểm soát từng lớp</td><td>Linh hoạt, quen thuộc, cache lớp tốt</td><td>Phải tự viết &amp; bảo trì</td></tr>
+              <tr><td><strong>Buildpacks</strong> (<code>spring-boot:build-image</code>)</td><td>Paketo tự dựng image tối ưu từ JAR</td><td><strong>Không cần Dockerfile</strong>; lớp tối ưu, có SBOM, cập nhật bảo mật dễ</td><td>Ít tuỳ biến; cần Docker daemon</td></tr>
+              <tr><td><strong>Jib</strong> (Google)</td><td>Plugin Maven/Gradle build image <strong>không cần Docker</strong></td><td>Nhanh, tái lập, hợp CI</td><td>Thêm một plugin</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Buildpacks — một lệnh</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-fn">./mvnw</span> <span class="tok-kw">-DskipTests</span> spring-boot:build-image <span class="tok-kw">-Dspring-boot.build-image.imageName=ghcr.io</span>/itbasic/shop-api:1.0.0
+<span class="tok-fn">docker</span> run <span class="tok-kw">--rm</span> <span class="tok-kw">-p</span> 8080:8080 <span class="tok-kw">-e</span> SPRING_PROFILES_ACTIVE=prod ghcr.io/itbasic/shop-api:1.0.0</code></pre>
+        </div>
+
+        <h3 id="dockerfile">1.1. Dockerfile multi-stage, tách lớp để cache</h3>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>Dockerfile</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-com"># ---------- Giai đoạn 1: build ----------</span>
+<span class="tok-kw">FROM</span> eclipse-temurin:<span class="tok-num">21</span>-jdk AS build
+<span class="tok-kw">WORKDIR</span> /workspace
+<span class="tok-kw">COPY</span> .mvn .mvn
+<span class="tok-kw">COPY</span> mvnw pom.xml ./
+<span class="tok-kw">RUN</span> ./mvnw -B -q dependency:go-offline              # lớp riêng cho dependency → chỉ chạy lại khi pom.xml đổi
+<span class="tok-kw">COPY</span> src src
+<span class="tok-kw">RUN</span> ./mvnw -B -q package -DskipTests                # test chạy ở CI, không lặp trong lúc build image
+<span class="tok-kw">RUN</span> java -Djarmode=layertools -jar target/*.jar extract --destination /layers   # tách JAR thành các lớp
+
+<span class="tok-com"># ---------- Giai đoạn 2: chạy ----------</span>
+<span class="tok-kw">FROM</span> eclipse-temurin:<span class="tok-num">21</span>-jre
+<span class="tok-kw">RUN</span> groupadd --system app &amp;&amp; useradd --system --gid app --no-create-home app    # KHÔNG chạy bằng root
+<span class="tok-kw">WORKDIR</span> /app
+<span class="tok-com"># Thứ tự từ ít đổi → hay đổi: lớp nào không đổi thì Docker dùng lại cache, push/pull chỉ lớp nhỏ</span>
+<span class="tok-kw">COPY</span> --from=build /layers/dependencies/ ./
+<span class="tok-kw">COPY</span> --from=build /layers/spring-boot-loader/ ./
+<span class="tok-kw">COPY</span> --from=build /layers/snapshot-dependencies/ ./
+<span class="tok-kw">COPY</span> --from=build /layers/application/ ./           # code của bạn — lớp nhỏ nhất, đổi nhiều nhất
+<span class="tok-kw">USER</span> app
+<span class="tok-kw">EXPOSE</span> <span class="tok-num">8080</span>
+<span class="tok-kw">ENV</span> JAVA_TOOL_OPTIONS=<span class="tok-str">"-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError"</span>
+<span class="tok-kw">HEALTHCHECK</span> --interval=30s --timeout=3s --start-period=40s \
+  <span class="tok-kw">CMD</span> wget -qO- http://localhost:<span class="tok-num">8080</span>/actuator/health/liveness || exit <span class="tok-num">1</span>
+<span class="tok-kw">ENTRYPOINT</span> [<span class="tok-str">"java"</span>, <span class="tok-str">"org.springframework.boot.loader.launch.JarLauncher"</span>]</code></pre>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Điểm đáng chú ý</th><th>Vì sao</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Multi-stage</strong></td><td>Image chạy chỉ có JRE + app, không có JDK/Maven/mã nguồn ⇒ nhỏ hơn, ít bề mặt tấn công</td></tr>
+              <tr><td>**Tách lớp (<code>layertools</code>)**</td><td>Dependency (chục MB) hiếm đổi; code của bạn (vài trăm KB) đổi mỗi commit ⇒ chỉ lớp nhỏ phải đẩy/kéo lại</td></tr>
+              <tr><td>**<code>USER app</code>**</td><td>Process bị khai thác cũng không có quyền root trong container</td></tr>
+              <tr><td><strong>Tag cụ thể</strong>, không dùng <code>latest</code></td><td>Build tái lập; biết chính xác đang chạy phiên bản nào (<code>1.0.0</code>, <code>git-sha</code>)</td></tr>
+              <tr><td>Bí mật <strong>không</strong> nằm trong image</td><td>Truyền bằng biến môi trường/secret lúc chạy (chương 3); lớp image có thể bị trích ra</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="java-note">
+          <h4>Ghi chú về phiên bản công cụ</h4>
+          <p>Từ Spring Boot 3.3, chế độ <code>-Djarmode=tools</code> là cách khuyến nghị thay cho <code>layertools</code> (cú pháp và tên thư mục đầu ra khác một chút). Hãy đối chiếu <em>Spring Boot Reference → Efficient Container Images</em> cho phiên bản Boot bạn dùng; nguyên tắc (tách dependency/application để tận dụng cache lớp) không đổi.</p>
+        </div>
+
+        <h3 id="jvm-container">1.2. JVM trong container</h3>
+
+        <ul>
+          <li><strong>Bộ nhớ</strong>: JVM hiện đại nhận biết giới hạn cgroup. Dùng <code>-XX:MaxRAMPercentage=75</code> (heap tối đa 75% bộ nhớ container) thay vì <code>-Xmx</code> cứng; chừa chỗ cho metaspace, thread stack, direct buffer. Heap = 100% ⇒ bị <em>OOMKilled</em> bởi kernel.</li>
+          <li><strong>CPU</strong>: <code>limits.cpu: 1</code> làm JVM thấy 1 lõi ⇒ ít thread GC/ForkJoin. Cấp tối thiểu <strong>2 CPU</strong> nếu muốn GC hoạt động ổn.</li>
+          <li><code>-XX:+ExitOnOutOfMemoryError</code>: hết bộ nhớ thì <strong>chết hẳn</strong> để orchestrator khởi động lại, thay vì sống dở chết dở.</li>
+          <li>Thời gian khởi động: Boot thông thường 2-6 giây; liên quan tới <em>readiness probe</em> (mục 4).</li>
+        </ul>
+
+        <h2 id="compose">2. <code>docker-compose</code> — môi trường dev một lệnh</h2>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>docker-compose.yml</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-cls">services</span>:
+  <span class="tok-cls">db</span>:
+    <span class="tok-cls">image</span>: postgres:<span class="tok-num">16</span>-alpine
+    <span class="tok-cls">environment</span>:
+      <span class="tok-cls">POSTGRES_DB</span>: shop
+      <span class="tok-cls">POSTGRES_USER</span>: shop
+      <span class="tok-cls">POSTGRES_PASSWORD</span>: ${DB_PASSWORD:?đặt DB_PASSWORD trong .env}<span class="tok-com">     # bắt buộc — không có default cho bí mật</span>
+    <span class="tok-cls">volumes</span>: [ <span class="tok-str">"pgdata:/var/lib/postgresql/data"</span> ]
+    <span class="tok-cls">healthcheck</span>:
+      <span class="tok-cls">test</span>: [<span class="tok-str">"CMD-SHELL"</span>, <span class="tok-str">"pg_isready -U shop -d shop"</span>]
+      <span class="tok-cls">interval</span>: 5s
+      <span class="tok-cls">retries</span>: <span class="tok-num">10</span>
+
+  <span class="tok-cls">redis</span>:
+    <span class="tok-cls">image</span>: redis:<span class="tok-num">7</span>-alpine
+    <span class="tok-cls">healthcheck</span>:
+      <span class="tok-cls">test</span>: [<span class="tok-str">"CMD"</span>, <span class="tok-str">"redis-cli"</span>, <span class="tok-str">"ping"</span>]
+      <span class="tok-cls">interval</span>: 5s
+
+  <span class="tok-cls">api</span>:
+    <span class="tok-cls">build</span>: .
+    <span class="tok-cls">ports</span>: [ <span class="tok-str">"8080:8080"</span> ]
+    <span class="tok-cls">environment</span>:
+      <span class="tok-cls">SPRING_PROFILES_ACTIVE</span>: dev
+      <span class="tok-cls">SPRING_DATASOURCE_URL</span>: jdbc:postgresql://db:<span class="tok-num">5432</span>/shop<span class="tok-com">           # tên service = tên DNS trong mạng compose</span>
+      <span class="tok-cls">SPRING_DATASOURCE_USERNAME</span>: shop
+      <span class="tok-cls">SPRING_DATASOURCE_PASSWORD</span>: ${DB_PASSWORD}
+      <span class="tok-cls">SPRING_DATA_REDIS_HOST</span>: redis
+      <span class="tok-cls">JWT_SECRET</span>: ${JWT_SECRET:?đặt JWT_SECRET trong .env}
+    <span class="tok-cls">depends_on</span>:
+      <span class="tok-cls">db</span>:    { condition: service_healthy }<span class="tok-com">                          # chờ DB sẵn sàng thật sự, không chỉ "container đã chạy"</span>
+      <span class="tok-cls">redis</span>: { condition: service_healthy }
+
+<span class="tok-cls">volumes</span>:
+  <span class="tok-cls">pgdata</span>:</code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Chạy</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-fn">echo</span> <span class="tok-str">"DB_PASSWORD=$(openssl rand -hex 16)"</span>  &gt; .env
+<span class="tok-fn">echo</span> <span class="tok-str">"JWT_SECRET=$(openssl rand -base64 48)"</span> &gt;&gt; .env     <span class="tok-com"> # .env nằm trong .gitignore!</span>
+<span class="tok-fn">docker</span> compose up <span class="tok-kw">--build</span>           <span class="tok-com"> # dựng image + chạy cả ba</span>
+<span class="tok-fn">docker</span> compose logs <span class="tok-kw">-f</span> api
+<span class="tok-fn">docker</span> compose down <span class="tok-kw">-v</span>              <span class="tok-com"> # tắt + xoá volume (xoá cả dữ liệu DB)</span></code></pre>
+        </div>
+        <div class="callout callout-tip">
+          <div class="callout-label">💡 Cũng có thể để Boot tự lo</div>
+          <p>Boot 3.1+ có <code>spring-boot-docker-compose</code>: khi bạn chạy ứng dụng từ IDE, nó **tự <code>docker compose up</code>** các dịch vụ khai báo trong <code>compose.yaml</code> và tự nối cấu hình (giống <code>@ServiceConnection</code> của Testcontainers — chương 11). Tiện cho dev: không cần cấu hình <code>spring.datasource.url</code> thủ công.</p>
+        </div>
+
+        <h2 id="ci-cd">3. CI/CD với GitHub Actions</h2>
+
+        <p>Mục tiêu: mỗi <code>push</code> ⇒ chạy test, build image, đẩy lên registry; merge vào <code>main</code> ⇒ triển khai. Mọi bước <strong>tự động và tái lập</strong> — không có "build trên máy anh A" (xem DevOps chương 4-5).</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>.github/workflows/ci.yml</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-cls">name</span>: ci
+<span class="tok-cls">on</span>:
+  <span class="tok-cls">push</span>:
+    <span class="tok-cls">branches</span>: [ main ]
+  <span class="tok-cls">pull_request</span>:
+
+<span class="tok-cls">permissions</span>:
+  <span class="tok-cls">contents</span>: read
+  <span class="tok-cls">packages</span>: write<span class="tok-com">                        # đẩy image lên GitHub Container Registry</span>
+
+<span class="tok-cls">jobs</span>:
+  <span class="tok-cls">test</span>:
+    <span class="tok-cls">runs-on</span>: ubuntu-latest<span class="tok-com">               # có sẵn Docker ⇒ Testcontainers chạy được</span>
+    <span class="tok-cls">steps</span>:
+      - <span class="tok-cls">uses</span>: actions/checkout@v4
+      - <span class="tok-cls">uses</span>: actions/setup-java@v4
+        <span class="tok-cls">with</span>:
+          <span class="tok-cls">distribution</span>: temurin
+          <span class="tok-cls">java-version</span>: <span class="tok-num">21</span>
+          <span class="tok-cls">cache</span>: maven<span class="tok-com">                    # cache ~/.m2 → build nhanh hơn nhiều</span>
+      - <span class="tok-cls">name</span>: Test (unit + slice + integration)
+        <span class="tok-cls">run</span>: ./mvnw -B verify
+      - <span class="tok-cls">name</span>: Báo cáo test khi lỗi
+        <span class="tok-cls">if</span>: failure()
+        <span class="tok-cls">uses</span>: actions/upload-artifact@v4
+        <span class="tok-cls">with</span>: { name: surefire-reports, path: target/surefire-reports }
+
+  <span class="tok-cls">image</span>:
+    <span class="tok-cls">needs</span>: test<span class="tok-com">                           # chỉ build image khi test xanh</span>
+    <span class="tok-cls">if</span>: github.ref == <span class="tok-str">'refs/heads/main'</span>
+    <span class="tok-cls">runs-on</span>: ubuntu-latest
+    <span class="tok-cls">steps</span>:
+      - <span class="tok-cls">uses</span>: actions/checkout@v4
+      - <span class="tok-cls">uses</span>: docker/setup-buildx-action@v3
+      - <span class="tok-cls">uses</span>: docker/login-action@v3
+        <span class="tok-cls">with</span>:
+          <span class="tok-cls">registry</span>: ghcr.io
+          <span class="tok-cls">username</span>: ${{ github.actor }}
+          <span class="tok-cls">password</span>: ${{ secrets.GITHUB_TOKEN }}
+      - <span class="tok-cls">uses</span>: docker/build-push-action@v6
+        <span class="tok-cls">with</span>:
+          <span class="tok-cls">context</span>: .
+          <span class="tok-cls">push</span>: <span class="tok-kw">true</span>
+          <span class="tok-cls">tags</span>: |
+            ghcr.io/${{ github.repository }}:${{ github.sha }}
+            ghcr.io/${{ github.repository }}:latest
+          <span class="tok-cls">cache-from</span>: type=gha
+          <span class="tok-cls">cache-to</span>: type=gha,mode=max
+
+  <span class="tok-cls">deploy</span>:
+    <span class="tok-cls">needs</span>: image
+    <span class="tok-cls">runs-on</span>: ubuntu-latest
+    <span class="tok-cls">environment</span>: production<span class="tok-com">               # có thể bật "required reviewers" = phê duyệt thủ công</span>
+    <span class="tok-cls">steps</span>:
+      - <span class="tok-cls">name</span>: Cập nhật image trên cluster
+        <span class="tok-cls">run</span>: |
+          kubectl set image deployment/shop-api api=ghcr.io/${{ github.repository }}:${{ github.sha }}
+          kubectl rollout status deployment/shop-api --timeout=180s     # lỗi → pipeline đỏ → có thể rollout undo</code></pre>
+        </div>
+        <ul>
+          <li>**Tag image bằng <code>git sha</code>** — biết chính xác code nào đang chạy và rollback về sha trước dễ dàng.</li>
+          <li><strong>Bí mật</strong> (kubeconfig, token) lưu trong <em>GitHub Secrets/Environments</em>, không bao giờ trong repo.</li>
+          <li><strong>Chia đôi test</strong>: unit/slice nhanh chạy trước (phản hồi sớm); integration (Testcontainers) sau — hoặc chạy song song.</li>
+          <li>Thêm bước <strong>quét bảo mật</strong>: <code>dependency-check</code>/Dependabot (thư viện), Trivy (image) — chương 9, DevOps chương 12.</li>
+        </ul>
+
+        <h2 id="kubernetes">4. Triển khai lên Kubernetes</h2>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>k8s/shop-api.yaml</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-cls">apiVersion</span>: apps/v1
+<span class="tok-cls">kind</span>: Deployment
+<span class="tok-cls">metadata</span>:
+  <span class="tok-cls">name</span>: shop-api
+<span class="tok-cls">spec</span>:
+  <span class="tok-cls">replicas</span>: <span class="tok-num">3</span>
+  <span class="tok-cls">strategy</span>:
+    <span class="tok-cls">type</span>: RollingUpdate
+    <span class="tok-cls">rollingUpdate</span>: { maxUnavailable: <span class="tok-num">0</span>, maxSurge: <span class="tok-num">1</span> }<span class="tok-com">          # luôn đủ 3 pod sẵn sàng khi cập nhật</span>
+  <span class="tok-cls">selector</span>:
+    <span class="tok-cls">matchLabels</span>: { app: shop-api }
+  <span class="tok-cls">template</span>:
+    <span class="tok-cls">metadata</span>:
+      <span class="tok-cls">labels</span>: { app: shop-api }
+    <span class="tok-cls">spec</span>:
+      <span class="tok-cls">terminationGracePeriodSeconds</span>: <span class="tok-num">45</span><span class="tok-com">                         # &gt; thời gian shutdown của Spring (mục dưới)</span>
+      <span class="tok-cls">containers</span>:
+        - <span class="tok-cls">name</span>: api
+          <span class="tok-cls">image</span>: ghcr.io/itbasic/shop-api:abc123
+          <span class="tok-cls">ports</span>: [ { containerPort: <span class="tok-num">8080</span> } ]
+          <span class="tok-cls">envFrom</span>:
+            - <span class="tok-cls">configMapRef</span>: { name: shop-api-config }<span class="tok-com">           # cấu hình KHÔNG nhạy cảm</span>
+          <span class="tok-cls">env</span>:
+            - <span class="tok-cls">name</span>: SPRING_DATASOURCE_PASSWORD
+              <span class="tok-cls">valueFrom</span>: { secretKeyRef: { name: shop-api-secret, key: db-password } }<span class="tok-com">   # bí mật</span>
+            - <span class="tok-cls">name</span>: JWT_SECRET
+              <span class="tok-cls">valueFrom</span>: { secretKeyRef: { name: shop-api-secret, key: jwt-secret } }
+          <span class="tok-cls">resources</span>:
+            <span class="tok-cls">requests</span>: { cpu: <span class="tok-str">"500m"</span>, memory: <span class="tok-str">"768Mi"</span> }
+            <span class="tok-cls">limits</span>:   { cpu: <span class="tok-str">"2"</span>,    memory: <span class="tok-str">"1Gi"</span> }<span class="tok-com">             # JVM: MaxRAMPercentage=75 → heap ~768Mi</span>
+          <span class="tok-cls">startupProbe</span>:<span class="tok-com">                                          # cho JVM thời gian khởi động</span>
+            <span class="tok-cls">httpGet</span>: { path: /actuator/health/liveness, port: <span class="tok-num">8080</span> }
+            <span class="tok-cls">failureThreshold</span>: <span class="tok-num">30</span>
+            <span class="tok-cls">periodSeconds</span>: <span class="tok-num">2</span>
+          <span class="tok-cls">readinessProbe</span>:<span class="tok-com">                                        # "sẵn sàng nhận request?" — false ⇒ rút khỏi Service</span>
+            <span class="tok-cls">httpGet</span>: { path: /actuator/health/readiness, port: <span class="tok-num">8080</span> }
+            <span class="tok-cls">periodSeconds</span>: <span class="tok-num">5</span>
+          <span class="tok-cls">livenessProbe</span>:<span class="tok-com">                                         # "process còn sống?" — false ⇒ K8s restart pod</span>
+            <span class="tok-cls">httpGet</span>: { path: /actuator/health/liveness, port: <span class="tok-num">8080</span> }
+            <span class="tok-cls">periodSeconds</span>: <span class="tok-num">10</span>
+            <span class="tok-cls">failureThreshold</span>: <span class="tok-num">3</span>
+---
+<span class="tok-cls">apiVersion</span>: v1
+<span class="tok-cls">kind</span>: Service
+<span class="tok-cls">metadata</span>: { name: shop-api }
+<span class="tok-cls">spec</span>:
+  <span class="tok-cls">selector</span>: { app: shop-api }
+  <span class="tok-cls">ports</span>: [ { port: <span class="tok-num">80</span>, targetPort: <span class="tok-num">8080</span> } ]</code></pre>
+        </div>
+
+        <h3 id="graceful">4.1. Graceful shutdown — cập nhật không rớt request</h3>
+
+        <p>Khi K8s thay pod cũ, nó gửi <code>SIGTERM</code>. Mặc định app có thể bị tắt giữa lúc đang xử lý request ⇒ client nhận lỗi. Bật tắt máy <strong>êm</strong>:</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>application.yml</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-cls">server</span>:
+  <span class="tok-cls">shutdown</span>: graceful<span class="tok-com">                       # ngừng nhận request MỚI, đợi request đang chạy xong</span>
+<span class="tok-cls">spring</span>:
+  <span class="tok-cls">lifecycle</span>:
+    <span class="tok-cls">timeout-per-shutdown-phase</span>: 30s<span class="tok-com">        # tối đa chờ 30s rồi tắt cứng</span></code></pre>
+        </div>
+        <div class="jvm-flow">
+          <div class="stages">
+            <div class="stage"><div class="stage-title">1. SIGTERM</div><div class="stage-content">K8s báo pod cần dừng; <strong>đồng thời</strong> rút pod khỏi endpoint của Service</div></div>
+            <div class="stage blue"><div class="stage-title">2. Readiness = REFUSING_TRAFFIC</div><div class="stage-content">Spring chuyển readiness sang false, từ chối kết nối mới</div></div>
+            <div class="stage"><div class="stage-title">3. Xử lý nốt</div><div class="stage-content">Request đang chạy được hoàn thành (≤ 30s)</div></div>
+            <div class="stage blue"><div class="stage-title">4. Đóng tài nguyên</div><div class="stage-content"><code>@PreDestroy</code>, đóng pool DB, ngắt listener Kafka</div></div>
+            <div class="stage"><div class="stage-title">5. Thoát</div><div class="stage-content">JVM thoát trước <code>terminationGracePeriodSeconds</code> (45s)</div></div>
+          </div>
+          <div class="caption">Rolling update + readiness + graceful shutdown ⇒ <strong>zero-downtime deploy</strong>.</div>
+        </div>
+        <div class="callout callout-gotcha">
+          <div class="callout-label">⚠️ Tách bạch liveness và readiness</div>
+          <p><strong>Liveness</strong> chỉ trả lời "process có bị treo không?" — nếu gộp kiểm tra DB vào liveness, DB chậm ⇒ K8s <em>restart tất cả pod</em> ⇒ sập cả hệ thống do chính cơ chế tự chữa. <strong>Readiness</strong> mới là nơi phản ánh phụ thuộc (DB, cache): sai ⇒ chỉ rút khỏi load balancer. Boot <code>management.endpoint.health.probes.enabled=true</code> tự dựng hai nhóm này (chương 13).</p>
+        </div>
+
+        <h3 id="migration-deploy">4.2. Migration khi triển khai</h3>
+
+        <p>Với 3 replica khởi động cùng lúc, Flyway dùng <strong>khoá bảng</strong> để chỉ một instance chạy migration, các instance khác chờ — an toàn. Nhưng nguyên tắc <strong>tương thích ngược</strong> (chương 7: expand → migrate → contract) là bắt buộc, vì trong lúc rolling update, <strong>code cũ và code mới cùng chạy</strong> trên cùng schema. Cách thận trọng hơn: chạy migration bằng một <strong>Job/initContainer riêng trước khi</strong> triển khai code mới.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Chiến lược</th><th>Cách làm</th><th>Phù hợp</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Rolling update</strong></td><td>Thay dần từng pod (mặc định K8s)</td><td>Đa số; cần schema tương thích ngược</td></tr>
+              <tr><td><strong>Blue/Green</strong></td><td>Dựng bản mới song song (green), kiểm tra, rồi <strong>chuyển toàn bộ lưu lượng</strong> một lần; giữ blue để quay lại ngay</td><td>Cần rollback tức thì; tốn gấp đôi tài nguyên tạm thời</td></tr>
+              <tr><td><strong>Canary</strong></td><td>Chuyển <strong>5% → 25% → 100%</strong> lưu lượng sang bản mới, theo dõi lỗi/độ trễ ở mỗi bước</td><td>Giảm rủi ro cho thay đổi lớn; cần giám sát tốt (chương 13)</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="production-ready">5. Checklist production-readiness</h2>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Nhóm</th><th>Kiểm tra</th><th>Chương</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Cấu hình</strong></td><td>Một artifact, cấu hình qua env/ConfigMap; <strong>không</strong> bí mật trong Git/image; profile <code>prod</code>; <code>@ConfigurationProperties</code> có validation (fail fast)</td><td>3</td></tr>
+              <tr><td><strong>An toàn</strong></td><td>HTTPS; mật khẩu BCrypt/Argon2; JWT ngắn hạn + refresh rotation; kiểm sở hữu (IDOR); CORS cụ thể; <code>/actuator</code> chỉ <code>health,info,prometheus</code> và sau xác thực; Swagger tắt; rate limit đăng nhập</td><td>9, 10, 12</td></tr>
+              <tr><td><strong>Dữ liệu</strong></td><td>Flyway + <code>ddl-auto: validate</code>; <code>open-in-view: false</code>; không N+1; transaction ngắn; pool vừa đủ; ràng buộc UNIQUE/FK ở DB; <strong>sao lưu</strong> + đã thử khôi phục</td><td>6, 7</td></tr>
+              <tr><td><strong>Khả năng chịu lỗi</strong></td><td>Timeout mọi lời gọi ra ngoài; retry (idempotent) + circuit breaker; Idempotency-Key; consumer idempotent; DLQ</td><td>8, 12, 13</td></tr>
+              <tr><td><strong>Lỗi &amp; log</strong></td><td><code>ProblemDetail</code> thống nhất; không lộ stack trace; log JSON có <code>traceId</code>; 5xx có <code>errorId</code></td><td>5, 13</td></tr>
+              <tr><td><strong>Quan sát</strong></td><td>Metrics (Prometheus) + dashboard + <strong>cảnh báo</strong>; tracing; liveness/readiness tách bạch</td><td>13</td></tr>
+              <tr><td><strong>Triển khai</strong></td><td>Image multi-stage, non-root, tag theo sha; <strong>graceful shutdown</strong>; rolling update <code>maxUnavailable: 0</code>; có cách <strong>rollback</strong> đã thử</td><td>14</td></tr>
+              <tr><td><strong>Chất lượng</strong></td><td>Test unit/slice/integration xanh trong CI; test phân quyền; quét phụ thuộc/image</td><td>11</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Log JSON có cấu trúc (Boot 3.4+)</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-cls">logging</span>:
+  <span class="tok-cls">structured</span>:
+    <span class="tok-cls">format</span>:
+      <span class="tok-cls">console</span>: ecs<span class="tok-com">            # hoặc logstash, gelf — mỗi dòng log là một JSON, dễ tìm trong Loki/ELK</span></code></pre>
+        </div>
+
+        <h2 id="native">6. GraalVM native image — khởi động tính bằng mili-giây</h2>
+
+        <p>Spring Boot 3 hỗ trợ biên dịch ứng dụng thành <strong>file thực thi native</strong> (AOT — <em>ahead-of-time</em>) bằng GraalVM, không cần JVM lúc chạy.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th></th><th>JVM (JIT)</th><th>Native image (AOT)</th></tr></thead>
+            <tbody>
+              <tr><td>Khởi động</td><td>2-6 giây</td><td><strong>~50-200 ms</strong></td></tr>
+              <tr><td>Bộ nhớ (RSS)</td><td>300-600 MB</td><td><strong>~50-150 MB</strong></td></tr>
+              <tr><td>Hiệu năng đỉnh (throughput)</td><td><strong>Cao hơn</strong> sau khi JIT "nóng"</td><td>Thấp hơn một chút, nhưng ổn định ngay từ đầu</td></tr>
+              <tr><td>Thời gian build</td><td>Giây</td><td><strong>Phút</strong> + nhiều RAM/CPU</td></tr>
+              <tr><td>Động (reflection, proxy, resource)</td><td>Thoải mái</td><td>Phải khai báo "hints"; một số thư viện chưa hỗ trợ</td></tr>
+              <tr><td>Debug/profiling</td><td>Công cụ JVM đầy đủ</td><td>Hạn chế hơn</td></tr>
+              <tr><td>Phù hợp</td><td><strong>Hầu hết dịch vụ chạy lâu dài</strong></td><td>Serverless/scale-to-zero, CLI, nơi khởi động nhanh &amp; ít RAM là sống còn</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Build native</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-fn">./mvnw</span> <span class="tok-kw">-Pnative</span> native:compile                <span class="tok-com"> # tạo target/shop-api (binary)</span>
+<span class="tok-fn">./mvnw</span> <span class="tok-kw">-Pnative</span> spring-boot:build-image       <span class="tok-com"> # hoặc image native bằng Buildpacks</span>
+<span class="tok-fn">./target/shop-api</span>                             <span class="tok-com"> # khởi động ~100ms</span></code></pre>
+        </div>
+        <div class="callout callout-note">
+          <div class="callout-label">📌 Lựa chọn thay thế</div>
+          <p>Muốn khởi động nhanh <em>mà không</em> đánh đổi nhiều: <strong>CRaC</strong> (checkpoint/restore — chụp JVM đã "nóng" rồi khôi phục, Boot 3.2+ có hỗ trợ trên JDK build kèm CRaC) và <strong>Class Data Sharing/AppCDS</strong> (giảm thời gian khởi động JVM thông thường vài chục %). Mặc định: <em>JVM thường</em>, đo trước khi chuyển.</p>
+        </div>
+
+        <h2 id="capstone">7. Dự án thực chiến — Shop API</h2>
+
+        <p>Mục tiêu: một <strong>backend thương mại điện tử</strong> hoàn chỉnh, ghép <em>mọi chương</em> của sub-pillar. Làm tuần tự theo mốc; mỗi mốc có tiêu chí nghiệm thu rõ ràng.</p>
+
+        <h3 id="yeu-cau">7.1. Phạm vi chức năng</h3>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Nhóm</th><th>Chức năng</th><th>Vai trò</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Người dùng</strong></td><td>Đăng ký, đăng nhập (JWT + refresh), đổi mật khẩu, xem/sửa hồ sơ</td><td>USER</td></tr>
+              <tr><td><strong>Danh mục</strong></td><td>CRUD sản phẩm &amp; danh mục; tìm kiếm, lọc, sắp xếp, phân trang</td><td>Xem: công khai · Ghi: ADMIN</td></tr>
+              <tr><td><strong>Giỏ &amp; đơn hàng</strong></td><td>Đặt hàng từ danh sách dòng; xem lịch sử của <em>chính mình</em>; huỷ đơn khi còn <code>NEW</code></td><td>USER (chủ đơn)</td></tr>
+              <tr><td><strong>Tồn kho</strong></td><td>Trừ tồn khi đặt, hoàn khi huỷ; không bán quá số lượng (đồng thời!)</td><td>Hệ thống</td></tr>
+              <tr><td><strong>Thanh toán (giả lập)</strong></td><td>Gọi cổng thanh toán giả; xử lý thất bại, timeout, trùng lặp</td><td>Hệ thống</td></tr>
+              <tr><td><strong>Quản trị</strong></td><td>Báo cáo doanh thu theo ngày; danh sách đơn mọi người dùng</td><td>ADMIN</td></tr>
+              <tr><td><strong>Thông báo</strong></td><td>Email xác nhận đơn <em>sau commit</em>, không chặn request</td><td>Hệ thống</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 id="mo-hinh">7.2. Mô hình dữ liệu</h3>
+
+        <div class="hierarchy"><pre>app_users ──&lt; orders ──&lt; order_items &gt;── products &gt;── categories
+    │                 │
+    │                 └── payments (1-1 với order)
+    └──&lt; refresh_tokens
+
+outbox (sự kiện chờ phát)        processed_messages (chống xử lý trùng)
+
+Ràng buộc chính:
+  app_users.email           UNIQUE
+  products.sku              UNIQUE, products.stock &gt;= 0 (CHECK)
+  order_items(order_id, product_id) UNIQUE
+  orders.version            @Version (khoá lạc quan)</pre></div>
+
+        <h3 id="milestone">7.3. Các mốc &amp; tiêu chí nghiệm thu</h3>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Mốc</th><th>Nội dung</th><th>Chương</th><th>Nghiệm thu (Definition of Done)</th></tr></thead>
+            <tbody>
+              <tr><td><strong>M1</strong> Khung</td><td>Dự án Boot, cấu hình theo profile, <code>AppProperties</code>, package-by-feature, ArchUnit</td><td>1-3, 8</td><td><code>./mvnw verify</code> xanh; thiếu <code>JWT_SECRET</code> ⇒ <strong>không khởi động</strong></td></tr>
+              <tr><td><strong>M2</strong> API sản phẩm</td><td>CRUD + phân trang + lọc; DTO; <code>ProblemDetail</code>; OpenAPI</td><td>4-6, 8</td><td>Swagger đủ mô tả mã lỗi; <code>size</code> bị chặn ≤ 100; validation trả <code>errors</code> theo trường</td></tr>
+              <tr><td><strong>M3</strong> Dữ liệu</td><td>PostgreSQL + Flyway; quan hệ Order/Item/Product; không N+1</td><td>6-7</td><td>Danh sách đơn ≤ 3 câu SQL (có test đếm); <code>ddl-auto: validate</code></td></tr>
+              <tr><td><strong>M4</strong> Bảo mật</td><td>Đăng ký/đăng nhập; JWT + refresh rotation; vai trò; IDOR</td><td>9-10</td><td>Test: user B đọc đơn của A ⇒ 404; tái dùng refresh token ⇒ thu hồi cả family</td></tr>
+              <tr><td><strong>M5</strong> Đặt hàng đúng đắn</td><td><code>@Transactional</code>; trừ tồn đồng thời; <code>@Version</code>/khoá bi quan</td><td>7</td><td>Test 50 luồng cùng mua 10 cái cuối: <strong>đúng 10 thành công</strong>, tồn kho = 0</td></tr>
+              <tr><td><strong>M6</strong> Bất đồng bộ</td><td>Email sau commit; cache danh mục (Redis); rate limit đăng nhập; outbox → broker</td><td>12</td><td>Rollback đơn ⇒ không có email; đăng nhập sai 6 lần/phút ⇒ 429</td></tr>
+              <tr><td><strong>M7</strong> Chịu lỗi</td><td>Cổng thanh toán giả có <code>RestClient</code> + timeout + retry + circuit breaker + Idempotency-Key</td><td>13</td><td>Cổng chậm/lỗi ⇒ đơn không treo; gọi trùng không trừ tiền hai lần</td></tr>
+              <tr><td><strong>M8</strong> Kiểm thử</td><td>Unit + <code>@WebMvcTest</code> + <code>@DataJpaTest</code> + vài integration (Testcontainers)</td><td>11</td><td>Test phân quyền cho mọi endpoint nhạy cảm; CI xanh</td></tr>
+              <tr><td><strong>M9</strong> Đóng gói &amp; CI/CD</td><td>Dockerfile multi-stage, compose, GitHub Actions, manifest K8s</td><td>14</td><td><code>docker compose up</code> chạy một lệnh; push <code>main</code> ⇒ image tag theo sha</td></tr>
+              <tr><td><strong>M10</strong> Vận hành</td><td>Metrics, tracing, log JSON, probes, graceful shutdown</td><td>13-14</td><td>Dashboard p95/tỉ lệ lỗi; rolling update dưới tải <strong>không rớt request</strong></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 id="api-spec">7.4. Danh sách endpoint tham khảo</h3>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Method &amp; đường dẫn</th><th>Quyền</th><th>Mã thành công</th></tr></thead>
+            <tbody>
+              <tr><td><code>POST /api/v1/auth/register</code></td><td>Công khai</td><td>201</td></tr>
+              <tr><td><code>POST /api/v1/auth/login</code> · <code>/refresh</code> · <code>/logout</code></td><td>Công khai</td><td>200 · 200 · 204</td></tr>
+              <tr><td><code>GET /api/v1/products?category=&amp;q=&amp;page=&amp;size=&amp;sort=</code></td><td>Công khai</td><td>200</td></tr>
+              <tr><td><code>POST</code> · <code>PUT</code> · <code>DELETE /api/v1/products[/{id}]</code></td><td>ADMIN</td><td>201+Location · 200 · 204</td></tr>
+              <tr><td><code>POST /api/v1/orders</code> (<code>Idempotency-Key</code>)</td><td>USER</td><td>201+Location</td></tr>
+              <tr><td><code>GET /api/v1/orders</code> · <code>/{id}</code></td><td>USER — chỉ đơn của mình</td><td>200 (404 nếu không phải của mình)</td></tr>
+              <tr><td><code>POST /api/v1/orders/{id}/cancel</code></td><td>USER — chủ đơn</td><td>200 / 409 nếu không còn <code>NEW</code></td></tr>
+              <tr><td><code>GET /api/v1/admin/reports/revenue?from=&amp;to=</code></td><td>ADMIN</td><td>200</td></tr>
+              <tr><td><code>GET /actuator/health/{liveness,readiness}</code> · <code>/prometheus</code></td><td>Công khai · nội bộ</td><td>200</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 id="checklist">7.5. Checklist chất lượng cuối cùng (14 mục)</h3>
+
+        <ul>
+          <li>☐ Mọi cấu hình/bí mật qua <strong>biến môi trường</strong>; thiếu bí mật ⇒ fail fast; không bí mật nào trong Git hay image.</li>
+          <li>☐ <strong>Không</strong> entity lộ ra response; DTO <code>record</code>; MapStruct báo lỗi biên dịch khi thiếu ánh xạ.</li>
+          <li>☐ Mọi endpoint ghi có <strong>validation</strong> <code>@Valid</code>; lỗi trả <code>application/problem+json</code>; không lộ stack trace/SQL.</li>
+          <li>☐ <code>open-in-view: false</code>; <strong>không N+1</strong> (có test đếm câu SQL cho endpoint danh sách).</li>
+          <li>☐ <code>@Transactional</code> ở service; exception nghiệp vụ unchecked; không gọi mạng chậm trong transaction.</li>
+          <li>☐ Không <strong>mất cập nhật</strong>: <code>@Version</code> hoặc khoá bi quan cho tồn kho; test đồng thời.</li>
+          <li>☐ Mọi tài nguyên của người dùng kiểm <strong>sở hữu</strong> (IDOR); test phân quyền cho từng endpoint nhạy cảm.</li>
+          <li>☐ Mật khẩu <strong>BCrypt/Argon2</strong>; access ngắn hạn, refresh <strong>rotation + hash trong DB</strong>; đăng nhập có rate limit.</li>
+          <li>☐ Mọi lời gọi ra ngoài có <strong>timeout</strong>; retry chỉ cho idempotent; circuit breaker; <code>Idempotency-Key</code> cho <code>POST</code> thanh toán.</li>
+          <li>☐ Sự kiện đi qua <strong>Outbox</strong>; consumer <strong>idempotent</strong>; có DLQ và cảnh báo.</li>
+          <li>☐ Flyway quản lý schema, <strong>tương thích ngược</strong>; có sao lưu và đã thử khôi phục.</li>
+          <li>☐ <strong>Test xanh</strong> trong CI (unit + slice + Testcontainers); quét phụ thuộc &amp; image.</li>
+          <li>☐ Image <strong>multi-stage, non-root</strong>, tag theo sha; <strong>graceful shutdown</strong> + probes; đã thử <strong>rollback</strong>.</li>
+          <li>☐ Có <strong>metrics + dashboard + cảnh báo</strong>, log JSON có <code>traceId</code>, tracing xuyên dịch vụ.</li>
+        </ul>
+        <div class="java-rule"><strong>Dự án chỉ "xong" khi bạn chứng minh được từng mục trong checklist bằng test hoặc bằng một thao tác kiểm chứng</strong> — không phải bằng niềm tin. "Chạy được trên máy tôi" chưa phải production-ready.</div>
+
+        <h2 id="tiep-theo">8. Sau Spring Boot, đi đâu tiếp?</h2>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Hướng</th><th>Học gì</th><th>Nơi trong IT Basic</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Frontend để thành fullstack</strong></td><td>React/TypeScript gọi chính API này; sinh client từ OpenAPI</td><td>JavaScript chương 1-12; Fullstack-ContactCenter G</td></tr>
+              <tr><td><strong>Hạ tầng sâu hơn</strong></td><td>Kubernetes, Terraform, CI/CD nâng cao, SRE</td><td>DevOps chương 5-14</td></tr>
+              <tr><td><strong>Thiết kế hệ thống</strong></td><td>Scale, caching, queue, case study</td><td>System Design chương 1-8</td></tr>
+              <tr><td><strong>CSDL nâng cao</strong></td><td>Tối ưu truy vấn, replication, sharding</td><td>Database chương 8-12</td></tr>
+              <tr><td><strong>Phỏng vấn backend</strong></td><td>DSA + System Design + câu hỏi Spring (DI, transaction, proxy, N+1, bảo mật)</td><td>DSA; System Design; chương quiz của sub-pillar này</td></tr>
+              <tr><td><strong>AI vào backend</strong></td><td>LLM, RAG, agent gọi từ dịch vụ Spring (Spring AI)</td><td>AI Engineering</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="bai-tap">Bài tập</h2>
+
+        <div class="exercises">
+
+          <div class="exercise">
+            <h4>Container hoá Shop API</h4>
+            <div class="exercise-body">
+              <p>Viết Dockerfile multi-stage và <code>docker-compose.yml</code> (app + PostgreSQL + Redis) như mục 1-2.</p>
+              <ul>
+                <li><code>docker images</code>: kích thước image? So với image <code>eclipse-temurin:21-jdk</code> thuần.</li>
+                <li>Sửa một dòng code rồi build lại: lớp nào được build lại, lớp nào dùng cache? Quan sát bằng <code>docker build</code> output.</li>
+                <li>Kiểm tra <code>docker exec &lt;c&gt; whoami</code> — kết quả? Vì sao không được là <code>root</code>?</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Chỉ lớp <code>application</code> (code của bạn) build lại nếu <code>pom.xml</code> không đổi; lớp dependencies dùng cache. <code>whoami</code> phải là <code>app</code>. Image runtime nhỏ hơn nhiều vì không có JDK/Maven/source.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Pipeline CI/CD</h4>
+            <div class="exercise-body">
+              <p>Tạo workflow GitHub Actions: <code>test</code> (Testcontainers) → <code>image</code> (đẩy lên GHCR, tag bằng sha) → <code>deploy</code> (có phê duyệt thủ công qua <em>Environment</em>).</p>
+              <ul>
+                <li>Làm một test đỏ có chủ đích: pipeline dừng ở đâu, image có được đẩy không?</li>
+                <li>Thêm quét <code>trivy image</code> và cho pipeline đỏ khi gặp lỗ hổng <code>CRITICAL</code>.</li>
+                <li>Giải thích vì sao tag <code>latest</code> đơn lẻ không đủ để rollback.</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p><code>needs: test</code> làm job <code>image</code> bị bỏ qua khi test đỏ. <code>latest</code> thay đổi liên tục — không biết phiên bản trước đó là gì; tag <code>sha</code> bất biến cho phép <code>kubectl set image …:&lt;sha_cũ&gt;</code> hoặc <code>rollout undo</code>.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Zero-downtime deploy</h4>
+            <div class="exercise-body">
+              <p>Triển khai lên cluster cục bộ (kind/minikube) theo manifest ở mục 4. Dùng <code>k6</code>/<code>hey</code> bắn tải liên tục vào <code>/api/v1/products</code>.</p>
+              <ul>
+                <li>Cập nhật image trong lúc đang bắn tải: có request nào lỗi không?</li>
+                <li>Tắt <code>server.shutdown=graceful</code> và <code>readinessProbe</code>, thử lại: so sánh số lỗi.</li>
+                <li>Giải thích vai trò của <code>maxUnavailable: 0</code>, readiness và <code>terminationGracePeriodSeconds</code>.</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Với đủ ba yếu tố (rolling <code>maxUnavailable: 0</code>, readiness, graceful shutdown) số lỗi gần như 0. Thiếu một trong ba, request có thể bị gửi vào pod đang tắt hoặc chưa sẵn sàng ⇒ 502/503 và kết nối bị reset.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Chứng minh M5: không bán quá tồn kho</h4>
+            <div class="exercise-body">
+              <p>Viết integration test (Testcontainers) cho kịch bản: sản phẩm còn 10, <strong>50 luồng</strong> cùng đặt mua 1 cái.</p>
+              <ul>
+                <li>Cài đặt ngây thơ (đọc → trừ → lưu): kết quả? (thường bán &gt; 10.)</li>
+                <li>Sửa bằng <code>@Version</code> + thử lại, rồi bằng <code>SELECT … FOR UPDATE</code>; hoặc <code>UPDATE products SET stock = stock - 1 WHERE id = ? AND stock &gt;= 1</code>.</li>
+                <li>So sánh ba cách về độ phức tạp, thông lượng và khả năng xảy ra deadlock.</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p><code>UPDATE … SET stock = stock - 1 WHERE stock &gt;= 1</code> kiểm tra số dòng bị ảnh hưởng (0 ⇒ hết hàng) là cách <strong>nguyên tử và rẻ nhất</strong> — không cần khoá phía ứng dụng. <code>@Version</code> đúng nhưng sinh nhiều lần thử lại khi tranh chấp cao; <code>FOR UPDATE</code> tuần tự hoá nhưng có thể nghẽn.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Đánh giá production-readiness</h4>
+            <div class="exercise-body">
+              <p>Lấy dự án Shop API của bạn và chấm theo <strong>14 mục checklist</strong> (7.5), mỗi mục <em>Đạt / Chưa đạt</em> kèm <strong>bằng chứng</strong> (tên test, lệnh kiểm tra, ảnh chụp dashboard).</p>
+              <ul>
+                <li>Với mỗi mục Chưa đạt, ghi một issue có tiêu chí hoàn thành.</li>
+                <li>Chọn <strong>3 mục rủi ro cao nhất</strong> (bảo mật, mất dữ liệu, sập dịch vụ) và sửa trước.</li>
+                <li>Trình bày ngắn (5 phút) cho một người bạn: vì sao hệ thống này an toàn để mở cho người dùng thật?</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Bằng chứng tốt là <em>có thể chạy lại</em>: một test, một lệnh <code>curl</code>, một truy vấn, một biểu đồ. Ưu tiên theo <strong>tác hại × khả năng xảy ra</strong>: lộ dữ liệu người dùng, mất/hỏng dữ liệu, ngừng dịch vụ đứng đầu.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+        </div>
+
+        <h2 id="quiz">Quiz</h2>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q1</span>
+            <div class="quiz-q-text"><p>Vì sao dùng Dockerfile multi-stage và tách lớp (layered JAR)?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Multi-stage cho image chạy <strong>chỉ có JRE + app</strong> (không JDK/Maven/source) ⇒ nhỏ, ít bề mặt tấn công. Tách lớp đưa dependency (to, hiếm đổi) và code (nhỏ, đổi nhiều) vào các lớp khác nhau ⇒ Docker dùng lại cache, mỗi lần build/push/pull chỉ lớp nhỏ thay đổi.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q2</span>
+            <div class="quiz-q-text"><p>Liveness và readiness probe khác nhau ra sao? Vì sao không nên đưa DB vào liveness?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p><strong>Liveness</strong>: process còn sống không — sai ⇒ K8s <strong>restart</strong> pod. <strong>Readiness</strong>: sẵn sàng nhận request không — sai ⇒ <strong>rút khỏi Service</strong> (không restart). Nếu liveness kiểm DB, DB chậm làm <em>mọi pod bị restart liên tục</em> — sập cả hệ thống do chính cơ chế tự chữa; phụ thuộc phải phản ánh ở readiness.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q3</span>
+            <div class="quiz-q-text"><p>Graceful shutdown giúp gì khi triển khai?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Khi nhận <code>SIGTERM</code>, Spring ngừng nhận kết nối mới (readiness chuyển sang từ chối), <strong>hoàn tất request đang chạy</strong> (trong <code>timeout-per-shutdown-phase</code>) rồi mới đóng tài nguyên. Kết hợp rolling update <code>maxUnavailable: 0</code> và readiness ⇒ cập nhật phiên bản <strong>không rớt request</strong>.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q4</span>
+            <div class="quiz-q-text"><p>Vì sao nên tag image bằng git sha thay vì <code>latest</code>?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p><code>latest</code> là con trỏ thay đổi — không biết chính xác code nào đang chạy và không có "phiên bản trước" để quay lại. Tag <code>sha</code> <strong>bất biến</strong> và truy được về commit ⇒ build tái lập, triển khai/rollback chính xác (<code>kubectl set image …:&lt;sha&gt;</code>).</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q5</span>
+            <div class="quiz-q-text"><p>Khi nào nên cân nhắc GraalVM native image?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Khi <strong>khởi động nhanh và RAM thấp</strong> là sống còn: serverless/scale-to-zero, tác vụ ngắn, mật độ container cao. Đánh đổi: build lâu, hint cho reflection/proxy, ít thư viện tương thích, throughput đỉnh thấp hơn JIT, debug hạn chế. Dịch vụ chạy lâu dài thông thường nên giữ JVM.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q6</span>
+            <div class="quiz-q-text"><p>Rolling update khác blue/green và canary thế nào?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p><strong>Rolling</strong>: thay dần từng pod (tiết kiệm, cần tương thích ngược giữa hai phiên bản). <strong>Blue/Green</strong>: dựng bản mới song song, kiểm tra rồi <strong>chuyển toàn bộ</strong> lưu lượng, giữ bản cũ để quay lại tức thì (tốn gấp đôi tài nguyên tạm). <strong>Canary</strong>: chuyển <em>tỉ lệ nhỏ</em> lưu lượng (5%→25%→100%) và theo dõi chỉ số trước khi mở rộng — giảm rủi ro cho thay đổi lớn.</p>
+            </div>
+          </details>
+        </div>
+
+        <h2 id="tong-ket">Tổng kết</h2>
+
+        <p>Sau chương 14, bạn đã nắm:</p>
+        <ul>
+          <li>Image: <strong>multi-stage + layered + non-root</strong>, hoặc <strong>Buildpacks/Jib</strong>; JVM trong container dùng <code>MaxRAMPercentage</code>, cấp ≥ 2 CPU; bí mật không nằm trong image.</li>
+          <li><strong>docker-compose</strong> (hoặc <code>spring-boot-docker-compose</code>) dựng dev một lệnh; <code>depends_on</code> với <code>healthcheck</code>.</li>
+          <li><strong>CI/CD</strong>: test (Testcontainers) → build/đẩy image <strong>tag sha</strong> → triển khai có phê duyệt; quét bảo mật trong pipeline.</li>
+          <li><strong>Kubernetes</strong>: ConfigMap/Secret, requests/limits, <strong>startup/readiness/liveness</strong>, <strong>graceful shutdown</strong>, rolling <code>maxUnavailable: 0</code> ⇒ zero-downtime.</li>
+          <li>Migration phải <strong>tương thích ngược</strong>; chọn rolling / blue-green / canary theo rủi ro.</li>
+          <li><strong>Checklist production-readiness</strong> (14 mục) là thước đo; mỗi mục cần <em>bằng chứng</em>. <strong>Native image</strong> chỉ khi khởi động/RAM là sống còn.</li>
+          <li><strong>Shop API</strong> ghép cả sub-pillar: từ DI, REST, JPA, bảo mật, JWT, test, cache/queue, chịu lỗi đến CI/CD và vận hành.</li>
+        </ul>
+
+        <h2 id="ket-noi">Kết nối</h2>
+        <ul>
+          <li><strong>Mọi chương trước</strong> — Shop API (mục 7) là bài tổng hợp: mỗi mốc M1-M10 gắn với các chương cụ thể.</li>
+          <li><strong>Chương 3 &amp; 11</strong> — cấu hình qua env, Testcontainers trong CI. <strong>Chương 13</strong> — probes, metrics, tracing cần khi chạy trên K8s.</li>
+          <li><strong>DevOps chương 4-6 &amp; 9-10</strong> — CI/CD, Docker, Kubernetes, secrets, observability: lý thuyết sâu hơn cho chương này.</li>
+          <li><strong>Lộ trình Fullstack</strong> (trang Roadmap) — Spring Boot là bước <em>backend</em> trong hướng B; kế tiếp là React và System Design.</li>
+          <li><strong>System Design chương 8</strong> — case study hệ thống lớn; <strong>Database chương 12</strong> — sao lưu, khôi phục, migration không downtime.</li>
+        </ul>
+
+        <nav class="chapter-nav">
+          <a href="chuong13.html" class="prev">
+            <div class="dir">← Chương 13</div>
+            <div class="label">Microservices &amp;amp; Spring Cloud</div>
+          </a>
+          <a href="../index.html" class="next">
+            <div class="dir">Hết →</div>
+            <div class="label">Về mục lục Spring Boot</div>
+          </a>
+        </nav>
+
+      </main>
+
+      <aside class="toc">
+        <div class="toc-label">Trong chương này</div>
+        <ul>
+          <li><a href="#dong-goi">1. Từ JAR đến image</a></li>
+          <li class="level-3"><a href="#dockerfile">1.1. Dockerfile multi-stage, tách lớp để cache</a></li>
+          <li class="level-3"><a href="#jvm-container">1.2. JVM trong container</a></li>
+          <li><a href="#compose">2. <code>docker-compose</code> — môi trường dev một lệnh</a></li>
+          <li><a href="#ci-cd">3. CI/CD với GitHub Actions</a></li>
+          <li><a href="#kubernetes">4. Triển khai lên Kubernetes</a></li>
+          <li class="level-3"><a href="#graceful">4.1. Graceful shutdown — cập nhật không rớt request</a></li>
+          <li class="level-3"><a href="#migration-deploy">4.2. Migration khi triển khai</a></li>
+          <li><a href="#production-ready">5. Checklist production-readiness</a></li>
+          <li><a href="#native">6. GraalVM native image — khởi động tính bằng mili-giây</a></li>
+          <li><a href="#capstone">7. Dự án thực chiến — Shop API</a></li>
+          <li class="level-3"><a href="#yeu-cau">7.1. Phạm vi chức năng</a></li>
+          <li class="level-3"><a href="#mo-hinh">7.2. Mô hình dữ liệu</a></li>
+          <li class="level-3"><a href="#milestone">7.3. Các mốc &amp; tiêu chí nghiệm thu</a></li>
+          <li class="level-3"><a href="#api-spec">7.4. Danh sách endpoint tham khảo</a></li>
+          <li class="level-3"><a href="#checklist">7.5. Checklist chất lượng cuối cùng (14 mục)</a></li>
+          <li><a href="#tiep-theo">8. Sau Spring Boot, đi đâu tiếp?</a></li>
+          <li><a href="#bai-tap">Bài tập</a></li>
+          <li><a href="#quiz">Quiz</a></li>
+          <li><a href="#tong-ket">Tổng kết</a></li>
+          <li><a href="#ket-noi">Kết nối</a></li>
+        </ul>
+      </aside>
+
+    </div>
+  </div>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p>
+        Chương 14 — Docker, deploy &amp;amp; dự án thực chiến · Spring Boot sub-pillar · Pillar 9 IT Basic<br/>
+        <a href="chuong13.html">← Chương 13</a> · <a href="../index.html">Spring Boot TOC</a>
+      </p>
+    </div>
+  </footer>
+
+  <script src="../../shared/js/chapter.js"></script>
+</body>
+</html>

@@ -1,0 +1,830 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chương 12 — Cache, Messaging &amp; Async — nhanh hơn và bớt phụ thuộc đồng bộ · Spring Boot Sub-pillar</title>
+  <meta name="description" content="Spring Cache với Caffeine và Redis, mẫu cache-aside và các cạm bẫy, Redis cho rate limit và khoá phân tán, @Async và @Scheduled, sự kiện ứng dụng, message queue với RabbitMQ/Kafka, Transactional Outbox và consumer idempotent." />
+  <meta name="theme-color" content="#4a9a28" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Bitter:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="../../shared/css/base.css">
+  <link rel="stylesheet" href="../css/theme.css">
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="container">
+      <a class="site-logo" href="../../../index.html">
+        <span class="mark mark-spring">Sb</span>
+        Spring Boot · IT Basic
+      </a>
+      <nav>
+        <ul class="site-nav">
+          <li><a href="../../../index.html">IT Basic</a></li>
+          <li><a href="../../index.html">Pillar 9</a></li>
+          <li><a href="../../Java/index.html">Java</a></li>
+          <li><a href="../index.html" class="active">Spring Boot</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <div class="container">
+    <header class="chapter-header">
+      <div class="breadcrumb">
+        <a href="../../../index.html">IT Basic</a><span class="sep">/</span>
+        <a href="../../index.html">Pillar 9</a><span class="sep">/</span>
+        <a href="../index.html">Spring Boot</a><span class="sep">/</span>
+        <span>Chương 12</span>
+      </div>
+      <div class="chapter-num">Chương 12 · Cache &amp; Messaging</div>
+      <h1 style="font-size: 2.6rem; margin: 0 0 12px; color: var(--ink);">
+        Cache, Messaging &amp; Async — nhanh hơn và bớt phụ thuộc đồng bộ
+      </h1>
+      <p class="lead">
+        Đến đây API của bạn đúng, an toàn, có test. Hai vấn đề mới sẽ xuất hiện khi tải tăng: <strong>chậm</strong> (cùng một truy vấn đắt chạy lại hàng nghìn lần) và <strong>ràng buộc chặt</strong> (đặt hàng xong phải gửi email, trừ kho, báo kế toán — nếu làm tất cả <em>trong</em> request thì chậm và một dịch vụ chết kéo cả luồng chết theo). Chương này có ba công cụ: <strong>cache</strong> (nhớ kết quả), <strong>bất đồng bộ</strong> (<code>@Async</code>, <code>@Scheduled</code>, sự kiện) và <strong>message queue</strong> (tách rời hoàn toàn các thành phần) — cùng với <em>cái giá</em> mà từng công cụ bắt bạn trả.
+      </p>
+      <div class="chapter-meta">
+        <span class="item"><strong>Bài tập:</strong> 5</span>
+        <span class="item"><strong>Quiz:</strong> 6</span>
+        <span class="item"><strong>Prerequisites:</strong> Chương 1-11</span>
+      </div>
+    </header>
+
+    <div class="layout">
+
+      <main class="prose">
+
+        <div class="callout callout-goal">
+          <div class="callout-label">🎯 Mục tiêu chương</div>
+          <ul>
+            <li>Dùng <strong>Spring Cache</strong> (<code>@Cacheable</code>, <code>@CachePut</code>, <code>@CacheEvict</code>) với <strong>Caffeine</strong> (cục bộ) và <strong>Redis</strong> (phân tán).</li>
+            <li>Hiểu mẫu <strong>cache-aside</strong>, <strong>TTL</strong>, <strong>stampede</strong> và vì sao <em>invalidation</em> khó.</li>
+            <li>Dùng <strong>Redis trực tiếp</strong> cho rate limit và khoá phân tán đơn giản.</li>
+            <li>Chạy việc nền bằng **<code>@Async</code><strong>, </strong><code>@Scheduled</code>** (và vấn đề chạy trùng khi nhiều instance).</li>
+            <li>Dùng <strong>sự kiện ứng dụng</strong> để giảm kết dính trong cùng một tiến trình.</li>
+            <li>Hiểu <strong>message queue</strong> (RabbitMQ vs Kafka) và viết producer/consumer bằng Spring.</li>
+            <li>Áp dụng <strong>Transactional Outbox</strong>, <strong>consumer idempotent</strong>, <strong>retry + DLQ</strong> để messaging đáng tin cậy.</li>
+          </ul>
+        </div>
+
+        <h2 id="vi-sao">1. Ba hướng để bớt gánh cho request</h2>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Vấn đề</th><th>Công cụ</th><th>Đánh đổi</th></tr></thead>
+            <tbody>
+              <tr><td>Truy vấn/tính toán <strong>đắt, lặp lại</strong> cho cùng kết quả</td><td><strong>Cache</strong></td><td>Dữ liệu có thể <strong>cũ</strong>; thêm độ phức tạp invalidation</td></tr>
+              <tr><td>Việc <strong>không cần làm xong trước khi trả lời</strong> (gửi email, dựng báo cáo)</td><td>**<code>@Async</code> / sự kiện / queue**</td><td>Kết quả không tức thời; lỗi xử lý <em>sau</em> khi đã trả 200</td></tr>
+              <tr><td>Nhiều hệ thống cùng phản ứng với một sự kiện; cần <strong>chịu lỗi &amp; đệm tải</strong></td><td><strong>Message queue</strong></td><td>Thêm hạ tầng (broker); <strong>nhất quán cuối cùng</strong>; debug khó hơn</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="java-rule"><strong>Mỗi công cụ giải một vấn đề <em>đo được</em> — đừng thêm trước khi có vấn đề.</strong> Cache thừa là nguồn bug "dữ liệu cũ" khó tái hiện; queue thừa là một hệ phân tán để vận hành. Đo (log SQL, <code>metrics</code>), tối ưu truy vấn/index (chương 6-7) trước; cache là <em>bước sau cùng</em>, không phải bước đầu.</div>
+
+        <h2 id="cache">2. Spring Cache</h2>
+
+        <p>Spring Cache là <strong>lớp trừu tượng</strong> (như <code>@Transactional</code>, chạy bằng <strong>proxy</strong> — chương 2): bạn gắn annotation lên method, Spring kiểm tra cache trước khi gọi method thật. Đổi nơi lưu (Caffeine ↔ Redis) chỉ là đổi cấu hình.</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Bật &amp; dùng</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Configuration</span>
+<span class="tok-ann">@EnableCaching</span>
+<span class="tok-kw">class</span> <span class="tok-cls">CacheConfig</span> { }
+
+<span class="tok-ann">@Service</span>
+<span class="tok-kw">class</span> <span class="tok-cls">ProductService</span> {
+
+    <span class="tok-ann">@Cacheable</span>(cacheNames = <span class="tok-str">"products"</span>, key = <span class="tok-str">"#id"</span>)                  <span class="tok-com">// có trong cache → trả ngay, KHÔNG chạy method</span>
+    <span class="tok-kw">public</span> <span class="tok-cls">ProductResponse</span> <span class="tok-fn">get</span>(<span class="tok-kw">long</span> id) {
+        <span class="tok-kw">return</span> mapper.<span class="tok-fn">toResponse</span>(repo.<span class="tok-fn">findById</span>(id).<span class="tok-fn">orElseThrow</span>(() -&gt; <span class="tok-kw">new</span> <span class="tok-cls">NotFoundException</span>(<span class="tok-str">"product"</span>, id)));
+    }
+
+    <span class="tok-ann">@CachePut</span>(cacheNames = <span class="tok-str">"products"</span>, key = <span class="tok-str">"#result.id()"</span>)          <span class="tok-com">// luôn chạy method, rồi GHI kết quả vào cache</span>
+    <span class="tok-kw">public</span> <span class="tok-cls">ProductResponse</span> <span class="tok-fn">update</span>(<span class="tok-kw">long</span> id, <span class="tok-cls">UpdateProductRequest</span> req) { ... }
+
+    <span class="tok-ann">@CacheEvict</span>(cacheNames = <span class="tok-str">"products"</span>, key = <span class="tok-str">"#id"</span>)                 <span class="tok-com">// xoá khỏi cache</span>
+    <span class="tok-kw">public</span> <span class="tok-kw">void</span> <span class="tok-fn">delete</span>(<span class="tok-kw">long</span> id) { ... }
+
+    <span class="tok-ann">@CacheEvict</span>(cacheNames = <span class="tok-str">"products"</span>, allEntries = <span class="tok-kw">true</span>)           <span class="tok-com">// xoá cả vùng cache (dùng tiết kiệm)</span>
+    <span class="tok-kw">public</span> <span class="tok-kw">void</span> <span class="tok-fn">reindex</span>() { ... }
+
+    <span class="tok-ann">@Cacheable</span>(cacheNames = <span class="tok-str">"categories"</span>, unless = <span class="tok-str">"#result.isEmpty()"</span>)     <span class="tok-com">// không cache kết quả rỗng</span>
+    <span class="tok-kw">public</span> <span class="tok-cls">List</span>&lt;<span class="tok-cls">CategoryResponse</span>&gt; <span class="tok-fn">categories</span>() { ... }
+}</code></pre>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Annotation</th><th>Hành vi</th><th>Dùng khi</th></tr></thead>
+            <tbody>
+              <tr><td><code>@Cacheable</code></td><td>Hit → trả cache, <strong>bỏ qua method</strong>. Miss → chạy method, lưu kết quả</td><td>Đọc</td></tr>
+              <tr><td><code>@CachePut</code></td><td><strong>Luôn chạy</strong> method rồi cập nhật cache</td><td>Ghi/cập nhật — giữ cache đồng bộ</td></tr>
+              <tr><td><code>@CacheEvict</code></td><td>Xoá entry (hoặc <code>allEntries</code>)</td><td>Xoá/đổi dữ liệu</td></tr>
+              <tr><td><code>@Caching</code></td><td>Gộp nhiều thao tác cache</td><td>Cập nhật ảnh hưởng nhiều khoá</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout callout-gotcha">
+          <div class="callout-label">⚠️ Cùng bẫy proxy như <code>@Transactional</code></div>
+          <p>Gọi <code>this.get(id)</code> từ method khác trong <strong>cùng lớp</strong> thì <code>@Cacheable</code> bị bỏ qua (không qua proxy). Method phải <code>public</code>, gọi từ bean khác. Và <code>key</code> mặc định gộp <em>mọi tham số</em> — đặt <code>key</code> tường minh bằng SpEL (<code>#id</code>, <code>#req.email</code>) để không cache nhầm.</p>
+        </div>
+
+        <h3 id="caffeine">2.1. Caffeine — cache trong bộ nhớ, rất nhanh</h3>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>pom.xml &amp; application.yml</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-com"># &lt;dependency&gt; com.github.ben-manes.caffeine:caffeine  +  spring-boot-starter-cache &lt;/dependency&gt;</span>
+<span class="tok-cls">spring</span>:
+  <span class="tok-cls">cache</span>:
+    <span class="tok-cls">type</span>: caffeine
+    <span class="tok-cls">cache-names</span>: products,categories
+    <span class="tok-cls">caffeine</span>:
+      <span class="tok-cls">spec</span>: maximumSize=<span class="tok-num">10000</span>,expireAfterWrite=10m<span class="tok-com">          # giới hạn kích thước + TTL</span></code></pre>
+        </div>
+        <p>Caffeine nằm <strong>trong JVM</strong> của từng instance: nhanh nhất (không qua mạng) nhưng <em>mỗi instance có bản riêng</em> — chạy 3 instance thì 3 cache không đồng bộ; một instance <code>@CacheEvict</code> không xoá bản của hai instance kia. Hợp cho dữ liệu <strong>ít đổi, chấp nhận hơi cũ</strong> (danh mục, cấu hình) hoặc khi chỉ có một instance.</p>
+
+        <h3 id="redis-cache">2.2. Redis — cache dùng chung giữa các instance</h3>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>application.yml</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-cls">spring</span>:
+  <span class="tok-cls">data</span>:
+    <span class="tok-cls">redis</span>:
+      <span class="tok-cls">host</span>: ${REDIS_HOST:localhost}
+      <span class="tok-cls">port</span>: <span class="tok-num">6379</span>
+  <span class="tok-cls">cache</span>:
+    <span class="tok-cls">type</span>: redis
+    <span class="tok-cls">redis</span>:
+      <span class="tok-cls">time-to-live</span>: 10m<span class="tok-com">               # TTL mặc định — LUÔN đặt, không để cache sống mãi</span>
+      <span class="tok-cls">cache-null-values</span>: <span class="tok-kw">false</span>
+      <span class="tok-cls">key-prefix</span>: <span class="tok-str">"shop:"</span>
+      <span class="tok-cls">use-key-prefix</span>: <span class="tok-kw">true</span></code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Tuỳ biến TTL &amp; serializer theo vùng cache</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Bean</span>
+<span class="tok-cls">RedisCacheManagerBuilderCustomizer</span> <span class="tok-fn">redisCaches</span>() {
+    <span class="tok-kw">var</span> json = <span class="tok-cls">RedisSerializationContext</span>.<span class="tok-cls">SerializationPair</span>.<span class="tok-fn">fromSerializer</span>(<span class="tok-kw">new</span> <span class="tok-cls">GenericJackson2JsonRedisSerializer</span>());
+    <span class="tok-cls">RedisCacheConfiguration</span> base = <span class="tok-cls">RedisCacheConfiguration</span>.<span class="tok-fn">defaultCacheConfig</span>()
+            .<span class="tok-fn">serializeValuesWith</span>(json)                         <span class="tok-com">// JSON dễ đọc/debug; mặc định là JDK serialization (cần Serializable)</span>
+            .<span class="tok-fn">disableCachingNullValues</span>();
+    <span class="tok-kw">return</span> builder -&gt; builder
+            .<span class="tok-fn">withCacheConfiguration</span>(<span class="tok-str">"products"</span>,   base.<span class="tok-fn">entryTtl</span>(<span class="tok-cls">Duration</span>.<span class="tok-fn">ofMinutes</span>(<span class="tok-num">10</span>)))
+            .<span class="tok-fn">withCacheConfiguration</span>(<span class="tok-str">"categories"</span>, base.<span class="tok-fn">entryTtl</span>(<span class="tok-cls">Duration</span>.<span class="tok-fn">ofHours</span>(<span class="tok-num">1</span>)));
+}</code></pre>
+        </div>
+        <p><strong>Cache DTO/response, không cache entity JPA</strong> — entity có proxy lazy, quan hệ vòng, khó serialize; DTO là dữ liệu phẳng, ổn định (chương 8).</p>
+
+        <h3 id="cache-aside">2.3. Mẫu cache-aside và những thứ có thể hỏng</h3>
+
+        <div class="jvm-flow">
+          <div class="stages">
+            <div class="stage"><div class="stage-title">1. Đọc</div><div class="stage-content">Ứng dụng hỏi cache trước</div></div>
+            <div class="stage blue"><div class="stage-title">2. Hit</div><div class="stage-content">Có ⇒ trả ngay (vài ms hoặc µs)</div></div>
+            <div class="stage"><div class="stage-title">3. Miss</div><div class="stage-content">Không có ⇒ truy vấn CSDL</div></div>
+            <div class="stage blue"><div class="stage-title">4. Điền cache</div><div class="stage-content">Ghi kết quả vào cache kèm TTL</div></div>
+            <div class="stage"><div class="stage-title">5. Ghi</div><div class="stage-content">Khi dữ liệu đổi: cập nhật DB <strong>rồi</strong> xoá/cập nhật cache</div></div>
+          </div>
+          <div class="caption">Đây là <em>cache-aside</em>: ứng dụng tự quản cache; <code>@Cacheable</code>/<code>@CacheEvict</code> hiện thực mẫu này.</div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Vấn đề</th><th>Mô tả</th><th>Cách giảm</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Dữ liệu cũ</strong> (stale)</td><td>DB đổi nhưng cache chưa kịp xoá/hết hạn</td><td>TTL ngắn; <code>@CacheEvict</code>/<code>@CachePut</code> ở mọi nơi ghi; chấp nhận <em>eventual consistency</em> có chủ đích</td></tr>
+              <tr><td><strong>Cache stampede</strong> (thundering herd)</td><td>Khoá nóng hết hạn ⇒ hàng nghìn request cùng miss ⇒ cùng đập DB</td><td><code>@Cacheable(sync = true)</code> (chỉ một luồng nạp lại); TTL ngẫu nhiên thêm <em>jitter</em></td></tr>
+              <tr><td><strong>Cache penetration</strong></td><td>Hỏi id không tồn tại liên tục ⇒ luôn miss ⇒ luôn đập DB</td><td>Cache giá trị rỗng với TTL ngắn; Bloom filter; rate limit</td></tr>
+              <tr><td><strong>Invalidation sai thứ tự</strong></td><td>Xoá cache <em>trước</em> khi commit DB ⇒ request khác nạp lại dữ liệu cũ</td><td>Xoá cache <strong>sau commit</strong> (<code>@TransactionalEventListener(AFTER_COMMIT)</code>) hoặc TTL ngắn</td></tr>
+              <tr><td><strong>Cache nhầm dữ liệu theo người dùng</strong></td><td>Key không chứa user ⇒ A thấy dữ liệu của B</td><td>Đưa <code>userId</code> vào key; không cache dữ liệu riêng tư ở cache dùng chung nếu không cần</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout callout-tip">
+          <div class="callout-label">💡 "There are only two hard things in Computer Science: cache invalidation and naming things."</div>
+          <p>Quy tắc thực dụng: <strong>cache cái đọc nhiều – ghi ít – chấp nhận hơi cũ</strong>; luôn đặt <strong>TTL</strong> làm lưới an toàn <em>ngay cả khi</em> có invalidation chủ động; đo <strong>hit ratio</strong> (<code>/actuator/metrics/cache.gets</code>) — cache hit ratio thấp là cache vô ích.</p>
+        </div>
+
+        <h2 id="redis-truc-tiep">3. Redis dùng trực tiếp</h2>
+
+        <p>Redis không chỉ là cache: nó là kho cấu trúc dữ liệu trong bộ nhớ, <strong>đơn luồng nên thao tác nguyên tử</strong>, kèm TTL. Hai việc rất thường gặp trong backend:</p>
+
+        <h3 id="rate-limit">3.1. Giới hạn tốc độ (rate limit)</h3>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>LoginRateLimiter.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Component</span>
+<span class="tok-kw">class</span> <span class="tok-cls">LoginRateLimiter</span> {
+
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">StringRedisTemplate</span> redis;
+    <span class="tok-cls">LoginRateLimiter</span>(<span class="tok-cls">StringRedisTemplate</span> redis) { <span class="tok-kw">this</span>.redis = redis; }
+
+    <span class="tok-com">/** Tối đa 5 lần thử / phút / IP — cửa sổ cố định. */</span>
+    <span class="tok-kw">void</span> <span class="tok-fn">check</span>(<span class="tok-cls">String</span> ip) {
+        <span class="tok-cls">String</span> key = <span class="tok-str">"rl:login:"</span> + ip;
+        <span class="tok-cls">Long</span> count = redis.<span class="tok-fn">opsForValue</span>().<span class="tok-fn">increment</span>(key);                  <span class="tok-com">// INCR: nguyên tử, tạo khoá = 1 nếu chưa có</span>
+        <span class="tok-kw">if</span> (count != <span class="tok-kw">null</span> &amp;&amp; count == <span class="tok-num">1</span>) {
+            redis.<span class="tok-fn">expire</span>(key, <span class="tok-cls">Duration</span>.<span class="tok-fn">ofMinutes</span>(<span class="tok-num">1</span>));                     <span class="tok-com">// chỉ đặt TTL ở lần đầu</span>
+        }
+        <span class="tok-kw">if</span> (count != <span class="tok-kw">null</span> &amp;&amp; count &gt; <span class="tok-num">5</span>) {
+            <span class="tok-kw">throw</span> <span class="tok-kw">new</span> <span class="tok-cls">TooManyRequestsException</span>(<span class="tok-str">"Quá nhiều lần đăng nhập, thử lại sau"</span>);     <span class="tok-com">// → 429 + Retry-After</span>
+        }
+    }
+}</code></pre>
+        </div>
+        <p>Đây là cửa sổ cố định (đơn giản, nhưng cho phép "bùng nổ" ở ranh giới cửa sổ). Với yêu cầu chặt hơn dùng <strong>token bucket</strong> qua thư viện (<strong>Bucket4j</strong> + Redis) hoặc Lua script để <code>INCR</code> + <code>EXPIRE</code> thành <strong>một thao tác nguyên tử</strong> (tránh trường hợp process chết giữa hai lệnh làm khoá không bao giờ hết hạn).</p>
+
+        <h3 id="lock">3.2. Khoá phân tán đơn giản</h3>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>Chỉ cho 1 instance chạy việc</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-cls">String</span> lockKey = <span class="tok-str">"lock:daily-report"</span>;
+<span class="tok-cls">String</span> token = <span class="tok-cls">UUID</span>.<span class="tok-fn">randomUUID</span>().<span class="tok-fn">toString</span>();
+
+<span class="tok-cls">Boolean</span> acquired = redis.<span class="tok-fn">opsForValue</span>().<span class="tok-fn">setIfAbsent</span>(lockKey, token, <span class="tok-cls">Duration</span>.<span class="tok-fn">ofMinutes</span>(<span class="tok-num">5</span>));   <span class="tok-com">// SET key val NX PX 300000</span>
+<span class="tok-kw">if</span> (<span class="tok-cls">Boolean</span>.<span class="tok-cls">TRUE</span>.<span class="tok-fn">equals</span>(acquired)) {
+    <span class="tok-kw">try</span> {
+        <span class="tok-fn">runDailyReport</span>();
+    } <span class="tok-kw">finally</span> {
+        <span class="tok-com">// chỉ xoá nếu khoá VẪN là của mình (so token) — dùng Lua để kiểm &amp; xoá nguyên tử</span>
+        redis.<span class="tok-fn">execute</span>(<span class="tok-cls">UNLOCK_SCRIPT</span>, <span class="tok-cls">List</span>.<span class="tok-fn">of</span>(lockKey), token);
+    }
+}</code></pre>
+        </div>
+        <div class="callout callout-warning">
+          <div class="callout-label">⚠️ Khoá phân tán không phải khoá thật</div>
+          <p>Nếu việc chạy lâu hơn TTL, khoá hết hạn và instance khác vào ⇒ hai bên cùng chạy. Với tính đúng đắn <strong>nghiêm ngặt</strong> (chuyển tiền) dùng <strong>ràng buộc/khoá ở CSDL</strong> (<code>@Version</code>, <code>SELECT … FOR UPDATE</code> — chương 7), không dựa vào Redis lock. Redis lock hợp cho "cố gắng chỉ một instance" (job nền, chống bấm đúp), kèm <em>idempotent</em> ở phía thực thi.</p>
+        </div>
+
+        <h2 id="async">4. Việc nền: <code>@Async</code> và <code>@Scheduled</code></h2>
+
+
+        <h3 id="async-anno">4.1. <code>@Async</code></h3>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>Bật &amp; dùng</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Configuration</span>
+<span class="tok-ann">@EnableAsync</span>
+<span class="tok-kw">class</span> <span class="tok-cls">AsyncConfig</span> {
+    <span class="tok-ann">@Bean</span>(name = <span class="tok-str">"mailExecutor"</span>)
+    <span class="tok-cls">Executor</span> <span class="tok-fn">mailExecutor</span>() {
+        <span class="tok-cls">ThreadPoolTaskExecutor</span> ex = <span class="tok-kw">new</span> <span class="tok-cls">ThreadPoolTaskExecutor</span>();
+        ex.<span class="tok-fn">setCorePoolSize</span>(<span class="tok-num">4</span>); ex.<span class="tok-fn">setMaxPoolSize</span>(<span class="tok-num">8</span>); ex.<span class="tok-fn">setQueueCapacity</span>(<span class="tok-num">200</span>);       <span class="tok-com">// hàng đợi CÓ GIỚI HẠN</span>
+        ex.<span class="tok-fn">setThreadNamePrefix</span>(<span class="tok-str">"mail-"</span>);
+        ex.<span class="tok-fn">setRejectedExecutionHandler</span>(<span class="tok-kw">new</span> <span class="tok-cls">ThreadPoolExecutor</span>.<span class="tok-cls">CallerRunsPolicy</span>());    <span class="tok-com">// quá tải → người gọi tự chạy (làm chậm lại thay vì mất việc)</span>
+        <span class="tok-kw">return</span> ex;
+    }
+}
+
+<span class="tok-ann">@Service</span>
+<span class="tok-kw">class</span> <span class="tok-cls">MailService</span> {
+    <span class="tok-ann">@Async</span>(<span class="tok-str">"mailExecutor"</span>)                                      <span class="tok-com">// chạy ở thread khác, trả về ngay cho người gọi</span>
+    <span class="tok-kw">public</span> <span class="tok-cls">CompletableFuture</span>&lt;<span class="tok-cls">Void</span>&gt; <span class="tok-fn">sendWelcome</span>(<span class="tok-cls">String</span> to) {
+        <span class="tok-com">// gọi SMTP chậm …</span>
+        <span class="tok-kw">return</span> <span class="tok-cls">CompletableFuture</span>.<span class="tok-fn">completedFuture</span>(<span class="tok-kw">null</span>);
+    }
+}</code></pre>
+        </div>
+        <ul>
+          <li>Cùng bẫy proxy: gọi từ <strong>cùng lớp</strong> thì không bất đồng bộ; method <code>public</code>; bean khác gọi.</li>
+          <li><strong>Không</strong> có transaction hay <code>SecurityContext</code> được truyền sang thread mới theo mặc định — đọc lại dữ liệu bằng id trong thread mới, truyền người dùng tường minh nếu cần.</li>
+          <li>Method <code>void</code> mà ném exception ⇒ nuốt lặng lẽ; cấu hình <code>AsyncUncaughtExceptionHandler</code> để <strong>log lỗi</strong>. Trả <code>CompletableFuture</code> thì xử lý bằng <code>.exceptionally</code>.</li>
+          <li><strong>Giới hạn hàng đợi</strong> — hàng đợi vô hạn rồi hết bộ nhớ là sự cố kinh điển. Boot 3.2+ với Java 21: <code>spring.threads.virtual.enabled=true</code> làm <code>@Async</code> mặc định chạy trên <em>virtual thread</em> (chương 1).</li>
+          <li><code>@Async</code> <strong>không bền</strong>: tắt máy giữa chừng ⇒ việc mất. Việc <em>phải</em> hoàn thành → dùng queue (mục 6).</li>
+        </ul>
+
+        <h3 id="scheduled">4.2. <code>@Scheduled</code></h3>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>Tác vụ định kỳ</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Configuration</span> <span class="tok-ann">@EnableScheduling</span> <span class="tok-kw">class</span> <span class="tok-cls">SchedulingConfig</span> { }
+
+<span class="tok-ann">@Component</span>
+<span class="tok-kw">class</span> <span class="tok-cls">Jobs</span> {
+
+    <span class="tok-ann">@Scheduled</span>(fixedDelayString = <span class="tok-str">"PT1M"</span>)                       <span class="tok-com">// 1 phút SAU KHI lần trước KẾT THÚC (không chồng lấn)</span>
+    <span class="tok-kw">void</span> <span class="tok-fn">pollOutbox</span>() { ... }
+
+    <span class="tok-ann">@Scheduled</span>(fixedRate = <span class="tok-num">30_000</span>)                              <span class="tok-com">// mỗi 30 giây từ lúc BẮT ĐẦU (có thể chồng nếu lâu hơn)</span>
+    <span class="tok-kw">void</span> <span class="tok-fn">heartbeat</span>() { ... }
+
+    <span class="tok-ann">@Scheduled</span>(cron = <span class="tok-str">"0 0 2 * * *"</span>, zone = <span class="tok-str">"Asia/Ho_Chi_Minh"</span>) <span class="tok-com">// 02:00 mỗi ngày giờ VN (giây phút giờ ngày tháng thứ)</span>
+    <span class="tok-kw">void</span> <span class="tok-fn">dailyReport</span>() { ... }
+}</code></pre>
+        </div>
+        <div class="callout callout-gotcha">
+          <div class="callout-label">⚠️ Chạy 3 instance ⇒ job chạy 3 lần</div>
+          <p><code>@Scheduled</code> chạy <strong>trong mỗi JVM</strong>. Scale ngang lên 3 pod, báo cáo hằng ngày gửi 3 lần. Giải pháp: <strong>ShedLock</strong> (khoá job qua DB/Redis: <code>@SchedulerLock(name = "dailyReport", lockAtMostFor = "10m")</code>), hoặc tách job ra một instance riêng/Kubernetes <code>CronJob</code>, hoặc dùng bộ lập lịch phân tán (Quartz cluster). Mặc định scheduler Spring chỉ có <strong>1 thread</strong> — job chậm chặn các job khác (<code>spring.task.scheduling.pool.size</code>).</p>
+        </div>
+
+        <h2 id="events">5. Sự kiện ứng dụng — tách rời <em>trong</em> một tiến trình</h2>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>Phát và nghe</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-kw">public</span> <span class="tok-kw">record</span> <span class="tok-cls">UserRegistered</span>(<span class="tok-cls">Long</span> userId, <span class="tok-cls">String</span> email) { }       <span class="tok-com">// record làm sự kiện: bất biến, gọn</span>
+
+<span class="tok-ann">@Service</span>
+<span class="tok-kw">class</span> <span class="tok-cls">RegistrationService</span> {
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">ApplicationEventPublisher</span> events;
+    <span class="tok-com">// constructor …</span>
+
+    <span class="tok-ann">@Transactional</span>
+    <span class="tok-kw">public</span> <span class="tok-kw">void</span> <span class="tok-fn">register</span>(<span class="tok-cls">RegisterRequest</span> req) {
+        <span class="tok-cls">AppUser</span> u = users.<span class="tok-fn">save</span>(...);
+        events.<span class="tok-fn">publishEvent</span>(<span class="tok-kw">new</span> <span class="tok-cls">UserRegistered</span>(u.<span class="tok-fn">getId</span>(), u.<span class="tok-fn">getEmail</span>()));
+    }
+}
+
+<span class="tok-ann">@Component</span>
+<span class="tok-kw">class</span> <span class="tok-cls">WelcomeEmailListener</span> {
+    <span class="tok-ann">@TransactionalEventListener</span>(phase = <span class="tok-cls">TransactionPhase</span>.<span class="tok-cls">AFTER_COMMIT</span>)    <span class="tok-com">// chỉ khi đăng ký ĐÃ commit (chương 7)</span>
+    <span class="tok-ann">@Async</span>(<span class="tok-str">"mailExecutor"</span>)
+    <span class="tok-kw">void</span> <span class="tok-fn">on</span>(<span class="tok-cls">UserRegistered</span> e) { mail.<span class="tok-fn">sendWelcome</span>(e.<span class="tok-fn">email</span>()); }
+}</code></pre>
+        </div>
+        <p>Lợi ích: <code>RegistrationService</code> không cần biết <em>ai</em> quan tâm tới việc đăng ký (email, thống kê, CRM…) — thêm người nghe không sửa dịch vụ gốc (Open/Closed; mẫu <em>Observer</em> — OOP chương 6). Giới hạn: vẫn <strong>cùng một JVM</strong> và <strong>không bền</strong>. Khi cần chạm tới <em>dịch vụ khác</em> hoặc phải sống sót qua sự cố ⇒ message queue.</p>
+
+        <h2 id="mq">6. Message queue</h2>
+
+        <p><strong>Message broker</strong> là trung gian nhận thông điệp từ <strong>producer</strong>, lưu bền, và giao cho <strong>consumer</strong> — hai phía không cần chạy cùng lúc, không cần biết nhau.</p>
+        <div class="jvm-flow">
+          <div class="stages">
+            <div class="stage"><div class="stage-title">Producer</div><div class="stage-content">Dịch vụ Đơn hàng: <code>publish(OrderPlaced)</code> rồi trả 201 ngay</div></div>
+            <div class="stage blue"><div class="stage-title">Broker</div><div class="stage-content">RabbitMQ / Kafka: <strong>lưu bền</strong>, định tuyến</div></div>
+            <div class="stage"><div class="stage-title">Consumer A</div><div class="stage-content">Kho: trừ tồn</div></div>
+            <div class="stage blue"><div class="stage-title">Consumer B</div><div class="stage-content">Email: gửi xác nhận</div></div>
+            <div class="stage"><div class="stage-title">Consumer C</div><div class="stage-content">Kế toán: ghi sổ</div></div>
+          </div>
+          <div class="caption">Producer không biết có bao nhiêu consumer; consumer chết thì thông điệp <strong>chờ</strong> trong broker.</div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th></th><th>RabbitMQ</th><th>Apache Kafka</th></tr></thead>
+            <tbody>
+              <tr><td>Bản chất</td><td><strong>Message broker</strong> truyền thống: queue, exchange, routing</td><td><strong>Log phân tán</strong> append-only: topic chia <strong>partition</strong></td></tr>
+              <tr><td>Thông điệp sau khi đọc</td><td>Bị xoá khi consumer <strong>ack</strong></td><td><strong>Giữ lại</strong> theo thời gian/kích thước; consumer đọc theo <strong>offset</strong> (đọc lại được)</td></tr>
+              <tr><td>Mô hình tiêu thụ</td><td>Push; nhiều consumer chia việc trên một queue</td><td>Pull; <strong>consumer group</strong>: mỗi partition một consumer trong nhóm</td></tr>
+              <tr><td>Thứ tự</td><td>Theo queue (đảo nếu nhiều consumer/retry)</td><td><strong>Đảm bảo trong một partition</strong> (cùng <code>key</code> ⇒ cùng partition)</td></tr>
+              <tr><td>Thông lượng</td><td>Chục nghìn msg/s</td><td>Hàng triệu msg/s</td></tr>
+              <tr><td>Hợp với</td><td><strong>Tác vụ/lệnh</strong> (gửi mail, xử lý ảnh), routing linh hoạt, độ trễ thấp</td><td><strong>Luồng sự kiện</strong> (event streaming), phân tích, event sourcing, nhiều consumer đọc độc lập, phát lại</td></tr>
+              <tr><td>Vận hành</td><td>Đơn giản hơn</td><td>Phức tạp hơn (cluster, partition, retention)</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout callout-tip">
+          <div class="callout-label">💡 Mặc định</div>
+          <p>Cần "giao việc nền đáng tin cậy" ⇒ <strong>RabbitMQ</strong> (hoặc SQS/Cloud Tasks). Cần "dòng sự kiện nhiều bên đọc, phát lại, thông lượng lớn" ⇒ <strong>Kafka</strong>. Đừng dùng Kafka chỉ để gửi vài email.</p>
+        </div>
+
+        <h3 id="rabbit">6.1. RabbitMQ với Spring AMQP</h3>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>Producer &amp; consumer</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-com">// spring-boot-starter-amqp;  spring.rabbitmq.host/port/username/password</span>
+<span class="tok-ann">@Configuration</span>
+<span class="tok-kw">class</span> <span class="tok-cls">RabbitConfig</span> {
+    <span class="tok-ann">@Bean</span> <span class="tok-cls">Queue</span> <span class="tok-fn">mailQueue</span>()        { <span class="tok-kw">return</span> <span class="tok-cls">QueueBuilder</span>.<span class="tok-fn">durable</span>(<span class="tok-str">"mail.send"</span>).<span class="tok-fn">withArgument</span>(<span class="tok-str">"x-dead-letter-exchange"</span>, <span class="tok-str">"dlx"</span>).<span class="tok-fn">build</span>(); }
+    <span class="tok-ann">@Bean</span> <span class="tok-cls">Jackson2JsonMessageConverter</span> <span class="tok-fn">converter</span>() { <span class="tok-kw">return</span> <span class="tok-kw">new</span> <span class="tok-cls">Jackson2JsonMessageConverter</span>(); }   <span class="tok-com">// JSON thay vì Java serialization</span>
+}
+
+<span class="tok-ann">@Service</span>
+<span class="tok-kw">class</span> <span class="tok-cls">MailProducer</span> {
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">RabbitTemplate</span> rabbit;
+    <span class="tok-cls">MailProducer</span>(<span class="tok-cls">RabbitTemplate</span> rabbit) { <span class="tok-kw">this</span>.rabbit = rabbit; }
+    <span class="tok-kw">void</span> <span class="tok-fn">send</span>(<span class="tok-cls">MailMessage</span> m) { rabbit.<span class="tok-fn">convertAndSend</span>(<span class="tok-str">"mail.send"</span>, m); }
+}
+
+<span class="tok-ann">@Component</span>
+<span class="tok-kw">class</span> <span class="tok-cls">MailConsumer</span> {
+    <span class="tok-ann">@RabbitListener</span>(queues = <span class="tok-str">"mail.send"</span>)
+    <span class="tok-kw">void</span> <span class="tok-fn">handle</span>(<span class="tok-cls">MailMessage</span> m) {
+        mailer.<span class="tok-fn">send</span>(m.<span class="tok-fn">to</span>(), m.<span class="tok-fn">subject</span>(), m.<span class="tok-fn">body</span>());       <span class="tok-com">// ném exception ⇒ retry/DLQ theo cấu hình (mục 7)</span>
+    }
+}</code></pre>
+        </div>
+
+        <h3 id="kafka">6.2. Kafka với Spring Kafka</h3>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>application.yml</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-cls">spring</span>:
+  <span class="tok-cls">kafka</span>:
+    <span class="tok-cls">bootstrap-servers</span>: ${KAFKA_BROKERS:localhost:<span class="tok-num">9092</span>}
+    <span class="tok-cls">producer</span>:
+      <span class="tok-cls">acks</span>: all<span class="tok-com">                                  # đợi mọi replica đồng bộ → không mất dữ liệu khi broker chết</span>
+      <span class="tok-cls">key-serializer</span>: org.apache.kafka.common.serialization.StringSerializer
+      <span class="tok-cls">value-serializer</span>: org.springframework.kafka.support.serializer.JsonSerializer
+    <span class="tok-cls">consumer</span>:
+      <span class="tok-cls">group-id</span>: inventory-service<span class="tok-com">                # mỗi dịch vụ một group → mỗi dịch vụ nhận ĐỦ bản sao thông điệp</span>
+      <span class="tok-cls">auto-offset-reset</span>: earliest
+      <span class="tok-cls">enable-auto-commit</span>: <span class="tok-kw">false</span>
+      <span class="tok-cls">key-deserializer</span>: org.apache.kafka.common.serialization.StringDeserializer
+      <span class="tok-cls">value-deserializer</span>: org.springframework.kafka.support.serializer.JsonDeserializer
+      <span class="tok-cls">properties</span>:
+        <span class="tok-cls">spring.json.trusted.packages</span>: <span class="tok-str">"vn.itbasic.shop.events"</span><span class="tok-com">    # chỉ giải mã lớp tin cậy — bảo mật</span></code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Producer &amp; consumer</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Service</span>
+<span class="tok-kw">class</span> <span class="tok-cls">OrderEventPublisher</span> {
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">KafkaTemplate</span>&lt;<span class="tok-cls">String</span>, <span class="tok-cls">OrderPlaced</span>&gt; kafka;
+    <span class="tok-cls">OrderEventPublisher</span>(<span class="tok-cls">KafkaTemplate</span>&lt;<span class="tok-cls">String</span>, <span class="tok-cls">OrderPlaced</span>&gt; kafka) { <span class="tok-kw">this</span>.kafka = kafka; }
+
+    <span class="tok-kw">void</span> <span class="tok-fn">publish</span>(<span class="tok-cls">OrderPlaced</span> e) {
+        kafka.<span class="tok-fn">send</span>(<span class="tok-str">"orders.placed"</span>, <span class="tok-cls">String</span>.<span class="tok-fn">valueOf</span>(e.<span class="tok-fn">orderId</span>()), e);   <span class="tok-com">// key = orderId ⇒ mọi sự kiện cùng đơn vào CÙNG partition ⇒ giữ thứ tự</span>
+    }
+}
+
+<span class="tok-ann">@Component</span>
+<span class="tok-kw">class</span> <span class="tok-cls">InventoryListener</span> {
+    <span class="tok-ann">@KafkaListener</span>(topics = <span class="tok-str">"orders.placed"</span>, groupId = <span class="tok-str">"inventory-service"</span>)
+    <span class="tok-kw">void</span> <span class="tok-fn">on</span>(<span class="tok-cls">OrderPlaced</span> e) {
+        inventory.<span class="tok-fn">reserve</span>(e.<span class="tok-fn">orderId</span>(), e.<span class="tok-fn">lines</span>());
+    }
+}</code></pre>
+        </div>
+
+        <h2 id="tin-cay">7. Messaging đáng tin cậy</h2>
+
+        <p>Thêm broker nghĩa là bạn bước vào hệ <strong>phân tán</strong>: mạng lỗi, trùng lặp và mất thứ tự là chuyện bình thường. Ba vấn đề phải giải quyết:</p>
+
+        <h3 id="dual-write">7.1. Dual-write và Transactional Outbox</h3>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>Hai thao tác không nguyên tử</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Transactional</span>
+<span class="tok-kw">void</span> <span class="tok-fn">place</span>(...) {
+    orders.<span class="tok-fn">save</span>(order);                                     <span class="tok-com">// (1) ghi DB</span>
+    kafka.<span class="tok-fn">send</span>(<span class="tok-str">"orders.placed"</span>, event);                     <span class="tok-com">// (2) gửi broker</span>
+}   <span class="tok-com">// (2) thành công nhưng (1) rollback → sự kiện về đơn KHÔNG TỒN TẠI</span>
+    <span class="tok-com">// (1) commit nhưng (2) lỗi/process chết → đơn có mà KHÔNG AI ĐƯỢC BÁO (kho không trừ, không email)</span></code></pre>
+        </div>
+        <p>Không có transaction nào bao trùm <em>cả DB và broker</em>. Giải pháp chuẩn: <strong>Transactional Outbox</strong> — ghi sự kiện vào một bảng <code>outbox</code> <strong>cùng transaction</strong> với dữ liệu nghiệp vụ (nguyên tử!), rồi một tiến trình riêng đọc bảng đó và đẩy lên broker:</p>
+        <div class="jvm-flow">
+          <div class="stages">
+            <div class="stage"><div class="stage-title">1. Một transaction DB</div><div class="stage-content"><code>INSERT orders</code> + <code>INSERT outbox(payload)</code> — cùng commit hoặc cùng rollback</div></div>
+            <div class="stage blue"><div class="stage-title">2. Relay đọc outbox</div><div class="stage-content"><code>@Scheduled</code> poll <code>SELECT … FOR UPDATE SKIP LOCKED</code> (hoặc CDC bằng Debezium)</div></div>
+            <div class="stage"><div class="stage-title">3. Gửi broker</div><div class="stage-content"><code>kafka.send(...)</code>; chờ ack</div></div>
+            <div class="stage blue"><div class="stage-title">4. Đánh dấu</div><div class="stage-content"><code>UPDATE outbox SET published_at = now()</code></div></div>
+          </div>
+          <div class="caption">Sự kiện <strong>không bao giờ mất</strong> (nằm trong DB bền); có thể gửi <strong>trùng</strong> nếu chết giữa bước 3-4 ⇒ consumer phải idempotent.</div>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Outbox</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Entity</span> <span class="tok-ann">@Table</span>(name = <span class="tok-str">"outbox"</span>)
+<span class="tok-kw">class</span> <span class="tok-cls">OutboxEvent</span> {
+    <span class="tok-ann">@Id</span> <span class="tok-kw">private</span> <span class="tok-cls">UUID</span> id = <span class="tok-cls">UUID</span>.<span class="tok-fn">randomUUID</span>();
+    <span class="tok-kw">private</span> <span class="tok-cls">String</span> aggregateType, aggregateId, eventType;
+    <span class="tok-ann">@Column</span>(columnDefinition = <span class="tok-str">"jsonb"</span>) <span class="tok-kw">private</span> <span class="tok-cls">String</span> payload;
+    <span class="tok-kw">private</span> <span class="tok-cls">Instant</span> createdAt = <span class="tok-cls">Instant</span>.<span class="tok-fn">now</span>();
+    <span class="tok-kw">private</span> <span class="tok-cls">Instant</span> publishedAt;
+}
+
+<span class="tok-kw">interface</span> <span class="tok-cls">OutboxRepository</span> <span class="tok-kw">extends</span> <span class="tok-cls">JpaRepository</span>&lt;<span class="tok-cls">OutboxEvent</span>, <span class="tok-cls">UUID</span>&gt; {
+    <span class="tok-ann">@Query</span>(value = <span class="tok-str">"select * from outbox where published_at is null order by created_at limit 100 for update skip locked"</span>,
+           nativeQuery = <span class="tok-kw">true</span>)                               <span class="tok-com">// nhiều relay chạy song song không giẫm chân nhau</span>
+    <span class="tok-cls">List</span>&lt;<span class="tok-cls">OutboxEvent</span>&gt; <span class="tok-fn">lockBatch</span>();
+}
+
+<span class="tok-ann">@Component</span>
+<span class="tok-kw">class</span> <span class="tok-cls">OutboxRelay</span> {
+    <span class="tok-ann">@Scheduled</span>(fixedDelayString = <span class="tok-str">"PT1S"</span>) <span class="tok-ann">@Transactional</span>
+    <span class="tok-kw">void</span> <span class="tok-fn">relay</span>() {
+        <span class="tok-kw">for</span> (<span class="tok-cls">OutboxEvent</span> e : outbox.<span class="tok-fn">lockBatch</span>()) {
+            kafka.<span class="tok-fn">send</span>(<span class="tok-fn">topicFor</span>(e), e.<span class="tok-fn">getAggregateId</span>(), e.<span class="tok-fn">getPayload</span>()).<span class="tok-fn">join</span>();   <span class="tok-com">// chờ ack mới đánh dấu</span>
+            e.<span class="tok-fn">markPublished</span>();
+        }
+    }
+}</code></pre>
+        </div>
+
+        <h3 id="idempotent">7.2. Consumer idempotent</h3>
+
+        <p>Hầu hết broker đảm bảo <strong>ít nhất một lần</strong> (<em>at-least-once</em>): sự kiện có thể đến <strong>nhiều lần</strong>. ("Đúng một lần" end-to-end gần như không có; nó thực chất là <em>at-least-once + xử lý idempotent</em>.) Consumer phải xử lý trùng mà không gây hại:</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Chống xử lý trùng</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Transactional</span>
+<span class="tok-ann">@KafkaListener</span>(topics = <span class="tok-str">"orders.placed"</span>, groupId = <span class="tok-str">"inventory-service"</span>)
+<span class="tok-kw">void</span> <span class="tok-fn">on</span>(<span class="tok-cls">OrderPlaced</span> e, <span class="tok-ann">@Header</span>(<span class="tok-cls">KafkaHeaders</span>.<span class="tok-cls">RECEIVED_KEY</span>) <span class="tok-cls">String</span> key) {
+    <span class="tok-com">// processed_messages(message_id PRIMARY KEY): insert &amp; hiệu ứng nghiệp vụ CÙNG transaction</span>
+    <span class="tok-kw">try</span> {
+        processed.<span class="tok-fn">saveAndFlush</span>(<span class="tok-kw">new</span> <span class="tok-cls">ProcessedMessage</span>(e.<span class="tok-fn">eventId</span>()));      <span class="tok-com">// trùng → vi phạm PRIMARY KEY</span>
+    } <span class="tok-kw">catch</span> (<span class="tok-cls">DataIntegrityViolationException</span> dup) {
+        <span class="tok-kw">return</span>;                                                          <span class="tok-com">// đã xử lý rồi → bỏ qua, ack bình thường</span>
+    }
+    inventory.<span class="tok-fn">reserve</span>(e.<span class="tok-fn">orderId</span>(), e.<span class="tok-fn">lines</span>());                           <span class="tok-com">// chỉ chạy đúng một lần hiệu quả</span>
+}</code></pre>
+        </div>
+        <p>Cách khác là thiết kế thao tác <strong>tự nhiên idempotent</strong> (<code>SET status = 'PAID'</code> an toàn khi lặp; <code>balance = balance + 10</code> thì không).</p>
+
+        <h3 id="retry-dlq">7.3. Retry và Dead Letter Queue</h3>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Tình huống</th><th>Nên làm</th></tr></thead>
+            <tbody>
+              <tr><td>Lỗi <strong>tạm thời</strong> (DB bận, API ngoài timeout)</td><td><strong>Retry</strong> có <em>backoff luỹ thừa</em> (1s, 2s, 4s…) và giới hạn số lần</td></tr>
+              <tr><td>Lỗi <strong>vĩnh viễn</strong> (JSON hỏng, dữ liệu vi phạm luật) — <em>poison message</em></td><td>Không retry vô hạn: chuyển sang <strong>Dead Letter Queue/Topic (DLQ)</strong> để người xem xét</td></tr>
+              <tr><td>Giám sát</td><td>Cảnh báo khi DLQ có thông điệp; công cụ <strong>replay</strong> sau khi sửa</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Retry + DLT trong Spring Kafka</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@RetryableTopic</span>(attempts = <span class="tok-str">"4"</span>,
+                backoff = <span class="tok-ann">@Backoff</span>(delay = <span class="tok-num">1000</span>, multiplier = <span class="tok-num">2.0</span>),      <span class="tok-com">// 1s → 2s → 4s</span>
+                dltStrategy = <span class="tok-cls">DltStrategy</span>.<span class="tok-cls">FAIL_ON_ERROR</span>)
+<span class="tok-ann">@KafkaListener</span>(topics = <span class="tok-str">"orders.placed"</span>, groupId = <span class="tok-str">"inventory-service"</span>)
+<span class="tok-kw">void</span> <span class="tok-fn">on</span>(<span class="tok-cls">OrderPlaced</span> e) { ... }
+
+<span class="tok-ann">@DltHandler</span>
+<span class="tok-kw">void</span> <span class="tok-fn">dead</span>(<span class="tok-cls">OrderPlaced</span> e, <span class="tok-ann">@Header</span>(<span class="tok-cls">KafkaHeaders</span>.<span class="tok-cls">EXCEPTION_MESSAGE</span>) <span class="tok-cls">String</span> why) {
+    log.<span class="tok-fn">error</span>(<span class="tok-str">"DLT orderId={} lý do={}"</span>, e.<span class="tok-fn">orderId</span>(), why);               <span class="tok-com">// + metric + alert</span>
+}</code></pre>
+        </div>
+        <div class="callout callout-note">
+          <div class="callout-label">📌 Nhất quán cuối cùng (eventual consistency)</div>
+          <p>Sau khi đặt hàng, tồn kho có thể trừ <strong>chậm vài giây</strong>. Thiết kế UI/nghiệp vụ chấp nhận điều đó (trạng thái "Đang xử lý") thay vì giả vờ mọi thứ tức thời. Với giao dịch xuyên nhiều dịch vụ cần hoàn tác: <strong>Saga</strong> (chương 13).</p>
+        </div>
+
+        <h2 id="cheat-sheet">8. Cheat sheet chương 12</h2>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Cần gì</th><th>Dùng</th></tr></thead>
+            <tbody>
+              <tr><td>Cache đọc nhiều/ghi ít, 1 instance</td><td><code>@Cacheable</code> + <strong>Caffeine</strong> (<code>maximumSize</code>, <code>expireAfterWrite</code>)</td></tr>
+              <tr><td>Cache dùng chung nhiều instance</td><td><code>@Cacheable</code> + <strong>Redis</strong>, TTL từng vùng, cache <strong>DTO</strong></td></tr>
+              <tr><td>Khoá nóng hết hạn đồng loạt</td><td><code>@Cacheable(sync = true)</code> + jitter TTL</td></tr>
+              <tr><td>Rate limit / bộ đếm / khoá nhẹ</td><td>Redis <code>INCR</code> + <code>EXPIRE</code> (hoặc Bucket4j); <code>SET NX PX</code></td></tr>
+              <tr><td>Việc nền nhẹ, mất cũng được</td><td><code>@Async</code> với executor <strong>có giới hạn</strong></td></tr>
+              <tr><td>Job định kỳ nhiều instance</td><td><code>@Scheduled</code> + <strong>ShedLock</strong> (hoặc CronJob)</td></tr>
+              <tr><td>Tách rời trong cùng JVM</td><td><code>ApplicationEvent</code> + <code>@TransactionalEventListener(AFTER_COMMIT)</code></td></tr>
+              <tr><td>Việc/sự kiện phải sống sót, nhiều dịch vụ</td><td><strong>RabbitMQ</strong>/<strong>Kafka</strong> + <strong>Outbox</strong> + consumer <strong>idempotent</strong> + retry/<strong>DLQ</strong></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="bai-tap">Bài tập</h2>
+
+        <div class="exercises">
+
+          <div class="exercise">
+            <h4>Cache sản phẩm với Caffeine</h4>
+            <div class="exercise-body">
+              <p>Thêm <code>@Cacheable("products")</code> cho <code>ProductService.get</code>. Bật log SQL.</p>
+              <ul>
+                <li>Gọi <code>GET /api/products/1</code> hai lần: có mấy câu SELECT?</li>
+                <li>Cập nhật sản phẩm 1 rồi <code>GET</code> lại: dữ liệu mới hay cũ? Thêm <code>@CachePut</code>/<code>@CacheEvict</code> cho đúng.</li>
+                <li>Gọi <code>this.get(1)</code> từ method khác cùng lớp — cache có hoạt động không? Vì sao?</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Lần đầu 1 SELECT, lần hai 0. Không evict ⇒ dữ liệu cũ đến hết TTL. <code>this.get</code> không qua proxy nên bị bỏ qua cache — chuyển sang bean khác hoặc tách lớp.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Dựng Redis cache và đo hit ratio</h4>
+            <div class="exercise-body">
+              <p>Chạy Redis bằng Docker. Chuyển <code>spring.cache.type=redis</code>, đặt TTL, JSON serializer.</p>
+              <ul>
+                <li>Dùng <code>redis-cli keys '*'</code> và <code>ttl &lt;key&gt;</code> xem khoá được tạo &amp; còn bao lâu.</li>
+                <li>Chạy 2 instance (cổng 8080/8081): đổi dữ liệu ở instance A và đọc từ B — thấy gì (Caffeine vs Redis)?</li>
+                <li>Đọc <code>/actuator/metrics/cache.gets?tag=result:hit</code> và <code>miss</code> để tính hit ratio.</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Redis cache dùng chung ⇒ evict ở A có hiệu lực ở B; Caffeine thì không (mỗi JVM một bản). Hit ratio &lt; 50% thường nghĩa là cache không đáng giữ hoặc TTL/key sai.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Rate limit đăng nhập</h4>
+            <div class="exercise-body">
+              <p>Cài <code>LoginRateLimiter</code> bằng Redis (mục 3.1): 5 lần / phút / IP, quá giới hạn ⇒ <code>429 Too Many Requests</code> + header <code>Retry-After</code>.</p>
+              <ul>
+                <li>Dùng vòng lặp <code>curl</code> kiểm chứng.</li>
+                <li>Mô tả tình huống <code>INCR</code> thành công nhưng process chết trước <code>EXPIRE</code> — hậu quả? Sửa bằng Lua.</li>
+                <li>Vì sao nên giới hạn theo cả IP <em>và</em> theo email đang bị thử?</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Khoá không TTL ⇒ IP bị chặn <em>vĩnh viễn</em>. Lua: <code>local c = redis.call('INCR', KEYS[1]); if c == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end; return c</code>. Theo IP một mình dễ né (nhiều IP, botnet) và có thể chặn nhầm cả văn phòng dùng chung IP.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Gửi email bất đồng bộ + sau commit</h4>
+            <div class="exercise-body">
+              <p>Khi đăng ký thành công, gửi email chào bằng <code>@TransactionalEventListener(AFTER_COMMIT)</code> + <code>@Async</code>.</p>
+              <ul>
+                <li>Cố tình làm transaction đăng ký rollback sau khi publish sự kiện — email có gửi không?</li>
+                <li>Bỏ <code>AFTER_COMMIT</code> (dùng <code>@EventListener</code>) — thử lại: chuyện gì xảy ra?</li>
+                <li>Mô phỏng SMTP chậm 5 giây — request đăng ký có bị chậm không?</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Với <code>AFTER_COMMIT</code>, rollback ⇒ listener không chạy. Với <code>@EventListener</code> thường, email đã đi trước khi commit — gửi cho tài khoản không tồn tại. <code>@Async</code> tách khỏi thread request nên không chậm.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Outbox + consumer idempotent (thực hành lớn)</h4>
+            <div class="exercise-body">
+              <p>Dựng Kafka (Docker). Khi <code>OrderService.place</code> thành công, ghi sự kiện vào <code>outbox</code>; <code>OutboxRelay</code> đẩy lên <code>orders.placed</code>; một consumer "kho" trừ tồn.</p>
+              <ul>
+                <li>Tắt Kafka, đặt 3 đơn, bật lại: sự kiện có tới kho không?</li>
+                <li>Cố ý để relay gửi trùng một sự kiện (kill giữa chừng): tồn kho trừ mấy lần? Cài bảng <code>processed_messages</code> để sửa.</li>
+                <li>Gửi một thông điệp JSON hỏng: nó đi đâu? Cấu hình <code>@RetryableTopic</code> + DLT.</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Outbox giữ sự kiện trong DB khi broker chết ⇒ không mất. Trùng được chặn bởi PRIMARY KEY của <code>processed_messages</code> trong <em>cùng transaction</em> với việc trừ tồn. Thông điệp độc (poison) sau N lần retry vào <code>orders.placed-dlt</code>.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+        </div>
+
+        <h2 id="quiz">Quiz</h2>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q1</span>
+            <div class="quiz-q-text"><p><code>@Cacheable</code>, <code>@CachePut</code>, <code>@CacheEvict</code> khác nhau thế nào?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p><code>@Cacheable</code>: hit thì <strong>bỏ qua method</strong> và trả cache; miss thì chạy và lưu. <code>@CachePut</code>: <strong>luôn chạy</strong> method rồi cập nhật cache (dùng khi ghi). <code>@CacheEvict</code>: xoá entry/cả vùng. Cả ba chạy qua proxy nên gọi từ cùng lớp sẽ không có tác dụng.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q2</span>
+            <div class="quiz-q-text"><p>Caffeine và Redis khác nhau thế nào? Khi nào chọn cái nào?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p><strong>Caffeine</strong>: trong JVM, nhanh nhất, nhưng <em>mỗi instance một bản</em> (không đồng bộ). <strong>Redis</strong>: cache chung qua mạng — nhất quán giữa instance, bền hơn, chậm hơn một chút. Một instance/ dữ liệu ít đổi → Caffeine; nhiều instance cần nhất quán → Redis (có thể kết hợp 2 tầng).</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q3</span>
+            <div class="quiz-q-text"><p>Cache stampede là gì và cách giảm?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Khoá nóng hết hạn cùng lúc ⇒ hàng nghìn request cùng miss ⇒ cùng truy vấn DB. Giảm bằng <code>@Cacheable(sync = true)</code> (chỉ một luồng nạp lại), thêm <strong>jitter</strong> vào TTL, làm nóng cache chủ động, hoặc nạp lại nền trước khi hết hạn.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q4</span>
+            <div class="quiz-q-text"><p>Vì sao <code>@Async</code> không đủ cho việc "bắt buộc phải hoàn thành"?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p><code>@Async</code> chạy trong bộ nhớ của JVM — <strong>không bền</strong>: tắt/sập giữa chừng thì việc mất; không có retry, không có thứ tự, hàng đợi có thể đầy. Việc bắt buộc hoàn thành cần queue bền (RabbitMQ/Kafka) hoặc bảng outbox + worker.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q5</span>
+            <div class="quiz-q-text"><p>Dual-write là gì? Transactional Outbox giải quyết thế nào?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Ghi DB rồi gửi broker là <em>hai thao tác không nguyên tử</em> — một thành công một thất bại gây mất/ma sự kiện. Outbox ghi sự kiện vào bảng <code>outbox</code> <strong>cùng transaction</strong> với dữ liệu nghiệp vụ (nguyên tử); một relay đọc bảng đó và đẩy lên broker ít nhất một lần, nên consumer phải <strong>idempotent</strong>.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q6</span>
+            <div class="quiz-q-text"><p>Vì sao consumer phải idempotent? Cách làm?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Broker đảm bảo <strong>at-least-once</strong> — thông điệp có thể giao lại (retry, relay gửi trùng, rebalance). Idempotent bằng: bảng <code>processed_messages</code> (PK <code>eventId</code>) ghi cùng transaction với hiệu ứng; hoặc thiết kế thao tác tự idempotent (<code>SET</code> thay vì <code>+=</code>); hoặc khoá duy nhất theo nghiệp vụ.</p>
+            </div>
+          </details>
+        </div>
+
+        <h2 id="tong-ket">Tổng kết</h2>
+
+        <p>Sau chương 12, bạn đã nắm:</p>
+        <ul>
+          <li>Đo trước, <strong>cache</strong> sau: <code>@Cacheable/@CachePut/@CacheEvict</code> qua proxy; <strong>Caffeine</strong> (cục bộ) vs <strong>Redis</strong> (chung); cache <strong>DTO</strong>, luôn có <strong>TTL</strong>.</li>
+          <li>Rủi ro cache: <strong>dữ liệu cũ, stampede, penetration, invalidation sai thứ tự</strong> — giảm bằng TTL, <code>sync = true</code>, evict sau commit.</li>
+          <li><strong>Redis</strong> trực tiếp cho rate limit (<code>INCR</code>+<code>EXPIRE</code>; an toàn hơn với Lua/Bucket4j) và khoá nhẹ — nhưng không thay khoá DB cho tính đúng đắn nghiêm ngặt.</li>
+          <li>**<code>@Async</code><strong> (executor có giới hạn; không bền) và </strong><code>@Scheduled</code><strong> (nhiều instance ⇒ ShedLock); </strong>sự kiện** <code>AFTER_COMMIT</code> để tách rời trong một JVM.</li>
+          <li><strong>Message queue</strong>: RabbitMQ cho tác vụ/lệnh, Kafka cho luồng sự kiện; key ⇒ partition ⇒ thứ tự.</li>
+          <li>Đáng tin cậy = <strong>Outbox</strong> (chống dual-write) + <strong>consumer idempotent</strong> (at-least-once) + <strong>retry/backoff + DLQ</strong>; chấp nhận <strong>eventual consistency</strong>.</li>
+        </ul>
+
+        <h2 id="ket-noi">Kết nối</h2>
+        <ul>
+          <li><strong>Chương 2 &amp; 7</strong> — proxy (self-invocation), <code>@TransactionalEventListener(AFTER_COMMIT)</code>, <code>SELECT … FOR UPDATE SKIP LOCKED</code>.</li>
+          <li><strong>Chương 10</strong> — Redis denylist <code>jti</code>, rate limit đăng nhập. <strong>Chương 11</strong> — Testcontainers cho Redis/Kafka, Awaitility cho async.</li>
+          <li><strong>Chương 13</strong> — Kafka/queue là xương sống giao tiếp giữa microservice; Saga cho giao dịch xuyên dịch vụ.</li>
+          <li><strong>Database chương 11</strong> — caching, search, OLTP vs OLAP. <strong>System Design chương 3 &amp; 5</strong> — chiến lược cache và message queue ở quy mô hệ thống.</li>
+          <li><strong>Fullstack-ContactCenter F3-F5</strong> — Redis, BullMQ và scaling realtime: cùng vấn đề, hệ sinh thái Node.</li>
+          <li><strong>Java chương 12</strong> — <code>ExecutorService</code>, <code>CompletableFuture</code>, virtual thread: nền tảng của <code>@Async</code>.</li>
+        </ul>
+
+        <nav class="chapter-nav">
+          <a href="chuong11.html" class="prev">
+            <div class="dir">← Chương 11</div>
+            <div class="label">Kiểm thử</div>
+          </a>
+          <a href="chuong13.html" class="next">
+            <div class="dir">Chương 13 →</div>
+            <div class="label">Microservices &amp;amp; Spring Cloud</div>
+          </a>
+        </nav>
+
+      </main>
+
+      <aside class="toc">
+        <div class="toc-label">Trong chương này</div>
+        <ul>
+          <li><a href="#vi-sao">1. Ba hướng để bớt gánh cho request</a></li>
+          <li><a href="#cache">2. Spring Cache</a></li>
+          <li class="level-3"><a href="#caffeine">2.1. Caffeine — cache trong bộ nhớ, rất nhanh</a></li>
+          <li class="level-3"><a href="#redis-cache">2.2. Redis — cache dùng chung giữa các instance</a></li>
+          <li class="level-3"><a href="#cache-aside">2.3. Mẫu cache-aside và những thứ có thể hỏng</a></li>
+          <li><a href="#redis-truc-tiep">3. Redis dùng trực tiếp</a></li>
+          <li class="level-3"><a href="#rate-limit">3.1. Giới hạn tốc độ (rate limit)</a></li>
+          <li class="level-3"><a href="#lock">3.2. Khoá phân tán đơn giản</a></li>
+          <li><a href="#async">4. Việc nền: <code>@Async</code> và <code>@Scheduled</code></a></li>
+          <li class="level-3"><a href="#async-anno">4.1. <code>@Async</code></a></li>
+          <li class="level-3"><a href="#scheduled">4.2. <code>@Scheduled</code></a></li>
+          <li><a href="#events">5. Sự kiện ứng dụng — tách rời <em>trong</em> một tiến trình</a></li>
+          <li><a href="#mq">6. Message queue</a></li>
+          <li class="level-3"><a href="#rabbit">6.1. RabbitMQ với Spring AMQP</a></li>
+          <li class="level-3"><a href="#kafka">6.2. Kafka với Spring Kafka</a></li>
+          <li><a href="#tin-cay">7. Messaging đáng tin cậy</a></li>
+          <li class="level-3"><a href="#dual-write">7.1. Dual-write và Transactional Outbox</a></li>
+          <li class="level-3"><a href="#idempotent">7.2. Consumer idempotent</a></li>
+          <li class="level-3"><a href="#retry-dlq">7.3. Retry và Dead Letter Queue</a></li>
+          <li><a href="#cheat-sheet">8. Cheat sheet chương 12</a></li>
+          <li><a href="#bai-tap">Bài tập</a></li>
+          <li><a href="#quiz">Quiz</a></li>
+          <li><a href="#tong-ket">Tổng kết</a></li>
+          <li><a href="#ket-noi">Kết nối</a></li>
+        </ul>
+      </aside>
+
+    </div>
+  </div>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p>
+        Chương 12 — Cache, Messaging &amp;amp; Async · Spring Boot sub-pillar · Pillar 9 IT Basic<br/>
+        <a href="chuong11.html">← Chương 11</a> · <a href="../index.html">Spring Boot TOC</a> · <a href="chuong13.html">Chương 13 →</a>
+      </p>
+    </div>
+  </footer>
+
+  <script src="../../shared/js/chapter.js"></script>
+</body>
+</html>

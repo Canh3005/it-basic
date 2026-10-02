@@ -1,0 +1,816 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chương 7 — JPA nâng cao &amp; Transaction — nơi 80% bug dữ liệu sinh ra · Spring Boot Sub-pillar</title>
+  <meta name="description" content="Persistence context và dirty checking, quan hệ giữa entity, lazy loading, bài toán N+1, @Transactional (propagation, rollback, readOnly), khoá lạc quan @Version và migration bằng Flyway." />
+  <meta name="theme-color" content="#4a9a28" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Bitter:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="../../shared/css/base.css">
+  <link rel="stylesheet" href="../css/theme.css">
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="container">
+      <a class="site-logo" href="../../../index.html">
+        <span class="mark mark-spring">Sb</span>
+        Spring Boot · IT Basic
+      </a>
+      <nav>
+        <ul class="site-nav">
+          <li><a href="../../../index.html">IT Basic</a></li>
+          <li><a href="../../index.html">Pillar 9</a></li>
+          <li><a href="../../Java/index.html">Java</a></li>
+          <li><a href="../index.html" class="active">Spring Boot</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <div class="container">
+    <header class="chapter-header">
+      <div class="breadcrumb">
+        <a href="../../../index.html">IT Basic</a><span class="sep">/</span>
+        <a href="../../index.html">Pillar 9</a><span class="sep">/</span>
+        <a href="../index.html">Spring Boot</a><span class="sep">/</span>
+        <span>Chương 7</span>
+      </div>
+      <div class="chapter-num">Chương 07 · JPA nâng cao</div>
+      <h1 style="font-size: 2.6rem; margin: 0 0 12px; color: var(--ink);">
+        JPA nâng cao &amp; Transaction — nơi 80% bug dữ liệu sinh ra
+      </h1>
+      <p class="lead">
+        CRUD đơn bảng thì JPA hiền. Rắc rối bắt đầu khi có <strong>quan hệ</strong> (đơn hàng → dòng hàng → sản phẩm) và <strong>transaction</strong> (chuyển tiền: trừ bên này, cộng bên kia, hoặc cả hai hoặc không gì cả). Đây là chương "khó" nhất của phần dữ liệu: hầu hết sự cố production liên quan JPA — truy vấn chậm bất thường, <code>LazyInitializationException</code>, dữ liệu ghi đè lẫn nhau — đều bắt nguồn từ việc không hiểu <strong>persistence context</strong> và <strong>ranh giới transaction</strong>.
+      </p>
+      <div class="chapter-meta">
+        <span class="item"><strong>Bài tập:</strong> 5</span>
+        <span class="item"><strong>Quiz:</strong> 6</span>
+        <span class="item"><strong>Prerequisites:</strong> Chương 1-6</span>
+      </div>
+    </header>
+
+    <div class="layout">
+
+      <main class="prose">
+
+        <div class="callout callout-goal">
+          <div class="callout-label">🎯 Mục tiêu chương</div>
+          <ul>
+            <li>Hiểu <strong>persistence context</strong>, vòng đời entity và <strong>dirty checking</strong> (vì sao đổi field mà không gọi <code>save</code> vẫn được lưu).</li>
+            <li>Ánh xạ <strong>quan hệ</strong> <code>@ManyToOne</code>, <code>@OneToMany</code>, <code>@ManyToMany</code>; hiểu <em>owning side</em>, <code>cascade</code>, <code>orphanRemoval</code>.</li>
+            <li>Giải thích và sửa **<code>LazyInitializationException</code>**.</li>
+            <li>Phát hiện và sửa bài toán <strong>N+1 query</strong> (<code>join fetch</code>, <code>@EntityGraph</code>, batch fetch, DTO projection).</li>
+            <li>Dùng **<code>@Transactional</code>** đúng: vị trí, <code>readOnly</code>, <strong>propagation</strong>, <strong>rollback rule</strong>, các bẫy.</li>
+            <li>Chống <strong>lost update</strong> bằng <strong>khoá lạc quan</strong> <code>@Version</code> (và biết khoá bi quan).</li>
+            <li>Quản lý schema bằng <strong>Flyway</strong> migration.</li>
+          </ul>
+        </div>
+
+        <h2 id="persistence-context">1. Persistence context — bộ nhớ làm việc của JPA</h2>
+
+        <p>Khi bạn tải một entity, Hibernate không chỉ trả về object — nó <strong>ghi nhớ</strong> object đó trong một "vùng làm việc" gọi là <strong>persistence context</strong> (còn gọi <em>first-level cache</em>, gắn với <code>EntityManager</code>/<code>Session</code>, và trong Spring thường gắn với <strong>một transaction</strong>). Mọi thứ sau đây đều hệ quả từ đó.</p>
+        <div class="jvm-flow">
+          <div class="stages">
+            <div class="stage"><div class="stage-title">Transient</div><div class="stage-content"><code>new Product(…)</code> — JPA chưa biết gì</div></div>
+            <div class="stage blue"><div class="stage-title"><code>persist</code> / <code>save</code></div><div class="stage-content">Trở thành managed</div></div>
+            <div class="stage"><div class="stage-title"><strong>Managed</strong></div><div class="stage-content">Nằm trong context; mọi thay đổi được <strong>theo dõi</strong></div></div>
+            <div class="stage blue"><div class="stage-title">Commit / flush</div><div class="stage-content">Hibernate so sánh trạng thái → sinh <code>UPDATE</code></div></div>
+            <div class="stage"><div class="stage-title">Detached</div><div class="stage-content">Context đóng (hết transaction) — object vẫn còn nhưng không được theo dõi</div></div>
+            <div class="stage blue"><div class="stage-title"><code>remove</code></div><div class="stage-content">Đánh dấu xoá → <code>DELETE</code> lúc flush</div></div>
+          </div>
+          <div class="caption">Chỉ entity ở trạng thái <strong>managed</strong> mới được tự động lưu thay đổi.</div>
+        </div>
+
+        <h3 id="dirty-checking">1.1. Dirty checking — đổi field là đủ</h3>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>ProductService.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Transactional</span>
+<span class="tok-kw">public</span> <span class="tok-kw">void</span> <span class="tok-fn">doiGia</span>(<span class="tok-kw">long</span> id, <span class="tok-cls">BigDecimal</span> giaMoi) {
+    <span class="tok-cls">Product</span> p = repo.<span class="tok-fn">findById</span>(id).<span class="tok-fn">orElseThrow</span>();   <span class="tok-com">// SELECT — p trở thành MANAGED</span>
+    p.<span class="tok-fn">changePrice</span>(giaMoi);                          <span class="tok-com">// chỉ đổi field trong bộ nhớ</span>
+    <span class="tok-com">// KHÔNG gọi repo.save(p)!</span>
+}                                                   <span class="tok-com">// commit → Hibernate thấy p "bẩn" → UPDATE products SET price=? WHERE id=?</span></code></pre>
+        </div>
+        <p>Đây là điều gây ngạc nhiên nhất với người mới: **không có <code>save()</code> vẫn lưu**. Ngược lại, quên <code>@Transactional</code> thì entity <strong>không được theo dõi</strong> và thay đổi mất tăm. Hệ quả hữu ích: cũng đừng gọi <code>save()</code> thừa trên entity đã managed — vô hại nhưng gây hiểu nhầm.</p>
+
+        <h3 id="first-level-cache">1.2. Bộ nhớ đệm cấp 1</h3>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>Trong cùng một transaction</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Transactional</span>
+<span class="tok-kw">void</span> <span class="tok-fn">demo</span>() {
+    <span class="tok-cls">Product</span> a = repo.<span class="tok-fn">findById</span>(<span class="tok-num">1L</span>).<span class="tok-fn">get</span>();     <span class="tok-com">// SELECT</span>
+    <span class="tok-cls">Product</span> b = repo.<span class="tok-fn">findById</span>(<span class="tok-num">1L</span>).<span class="tok-fn">get</span>();     <span class="tok-com">// KHÔNG có SELECT thứ hai — lấy từ context</span>
+    <span class="tok-cls">System</span>.out.<span class="tok-fn">println</span>(a == b);              <span class="tok-com">// true: cùng một instance</span>
+}</code></pre>
+        </div>
+        <p>Trong một persistence context, mỗi dòng DB chỉ có <strong>một object duy nhất</strong>. Tiện (nhất quán trong transaction) nhưng cũng có bẫy: câu <code>@Modifying</code> UPDATE hàng loạt bỏ qua context ⇒ entity trong bộ nhớ lỗi thời — vì vậy ta dùng <code>clearAutomatically = true</code> ở chương 6.</p>
+
+        <h2 id="quan-he">2. Quan hệ giữa các entity</h2>
+
+        <p>Mô hình: <strong>Customer</strong> 1—N <strong>Order</strong> 1—N <strong>OrderItem</strong> N—1 <strong>Product</strong>.</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Order.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Entity</span>
+<span class="tok-ann">@Table</span>(name = <span class="tok-str">"orders"</span>)                                    <span class="tok-com">// "order" là từ khoá SQL → đặt tên bảng khác</span>
+<span class="tok-kw">public</span> <span class="tok-kw">class</span> <span class="tok-cls">Order</span> {
+
+    <span class="tok-ann">@Id</span> <span class="tok-ann">@GeneratedValue</span>(strategy = <span class="tok-cls">GenerationType</span>.<span class="tok-cls">IDENTITY</span>)
+    <span class="tok-kw">private</span> <span class="tok-cls">Long</span> id;
+
+    <span class="tok-ann">@ManyToOne</span>(fetch = <span class="tok-cls">FetchType</span>.<span class="tok-cls">LAZY</span>, optional = <span class="tok-kw">false</span>)   <span class="tok-com">// nhiều đơn → một khách; LUÔN đặt LAZY</span>
+    <span class="tok-ann">@JoinColumn</span>(name = <span class="tok-str">"customer_id"</span>)                      <span class="tok-com">// cột khoá ngoại nằm ở bảng orders</span>
+    <span class="tok-kw">private</span> <span class="tok-cls">Customer</span> customer;
+
+    <span class="tok-ann">@OneToMany</span>(mappedBy = <span class="tok-str">"order"</span>,                         <span class="tok-com">// mappedBy = phía KHÔNG giữ khoá ngoại</span>
+               cascade = <span class="tok-cls">CascadeType</span>.<span class="tok-cls">ALL</span>, orphanRemoval = <span class="tok-kw">true</span>)
+    <span class="tok-kw">private</span> <span class="tok-cls">List</span>&lt;<span class="tok-cls">OrderItem</span>&gt; items = <span class="tok-kw">new</span> <span class="tok-cls">ArrayList</span>&lt;&gt;();
+
+    <span class="tok-ann">@Enumerated</span>(<span class="tok-cls">EnumType</span>.<span class="tok-cls">STRING</span>)
+    <span class="tok-kw">private</span> <span class="tok-cls">OrderStatus</span> status = <span class="tok-cls">OrderStatus</span>.<span class="tok-cls">NEW</span>;
+
+    <span class="tok-ann">@Version</span>
+    <span class="tok-kw">private</span> <span class="tok-kw">long</span> version;                                  <span class="tok-com">// khoá lạc quan (mục 5)</span>
+
+    <span class="tok-kw">protected</span> <span class="tok-cls">Order</span>() { }
+    <span class="tok-kw">public</span> <span class="tok-cls">Order</span>(<span class="tok-cls">Customer</span> customer) { <span class="tok-kw">this</span>.customer = customer; }
+
+    <span class="tok-com">// Đồng bộ CẢ HAI chiều của quan hệ trong một method</span>
+    <span class="tok-kw">public</span> <span class="tok-kw">void</span> <span class="tok-fn">addItem</span>(<span class="tok-cls">Product</span> product, <span class="tok-kw">int</span> quantity) {
+        items.<span class="tok-fn">add</span>(<span class="tok-kw">new</span> <span class="tok-cls">OrderItem</span>(<span class="tok-kw">this</span>, product, quantity, product.<span class="tok-fn">getPrice</span>()));
+    }
+    <span class="tok-kw">public</span> <span class="tok-cls">List</span>&lt;<span class="tok-cls">OrderItem</span>&gt; <span class="tok-fn">getItems</span>() { <span class="tok-kw">return</span> <span class="tok-cls">Collections</span>.<span class="tok-fn">unmodifiableList</span>(items); }
+}
+
+<span class="tok-ann">@Entity</span>
+<span class="tok-kw">public</span> <span class="tok-kw">class</span> <span class="tok-cls">OrderItem</span> {
+    <span class="tok-ann">@Id</span> <span class="tok-ann">@GeneratedValue</span>(strategy = <span class="tok-cls">GenerationType</span>.<span class="tok-cls">IDENTITY</span>) <span class="tok-kw">private</span> <span class="tok-cls">Long</span> id;
+
+    <span class="tok-ann">@ManyToOne</span>(fetch = <span class="tok-cls">FetchType</span>.<span class="tok-cls">LAZY</span>, optional = <span class="tok-kw">false</span>) <span class="tok-ann">@JoinColumn</span>(name = <span class="tok-str">"order_id"</span>)
+    <span class="tok-kw">private</span> <span class="tok-cls">Order</span> order;                                   <span class="tok-com">// ← đây là OWNING SIDE (giữ cột order_id)</span>
+
+    <span class="tok-ann">@ManyToOne</span>(fetch = <span class="tok-cls">FetchType</span>.<span class="tok-cls">LAZY</span>, optional = <span class="tok-kw">false</span>) <span class="tok-ann">@JoinColumn</span>(name = <span class="tok-str">"product_id"</span>)
+    <span class="tok-kw">private</span> <span class="tok-cls">Product</span> product;
+
+    <span class="tok-kw">private</span> <span class="tok-kw">int</span> quantity;
+    <span class="tok-ann">@Column</span>(precision = <span class="tok-num">12</span>, scale = <span class="tok-num">2</span>) <span class="tok-kw">private</span> <span class="tok-cls">BigDecimal</span> unitPrice;   <span class="tok-com">// chụp giá TẠI THỜI ĐIỂM đặt</span>
+
+    <span class="tok-kw">protected</span> <span class="tok-cls">OrderItem</span>() { }
+    <span class="tok-cls">OrderItem</span>(<span class="tok-cls">Order</span> o, <span class="tok-cls">Product</span> p, <span class="tok-kw">int</span> q, <span class="tok-cls">BigDecimal</span> price) { order = o; product = p; quantity = q; unitPrice = price; }
+}</code></pre>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Khái niệm</th><th>Ý nghĩa</th><th>Lưu ý</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Owning side</strong></td><td>Phía có <code>@JoinColumn</code> (giữ khoá ngoại). <strong>Chỉ phía này</strong> quyết định giá trị cột FK khi ghi</td><td><code>mappedBy</code> ở phía kia</td></tr>
+              <tr><td><code>mappedBy</code></td><td>"Quan hệ này được định nghĩa ở trường <code>order</code> bên kia"</td><td>Quên ⇒ Hibernate tạo thêm <strong>bảng nối thừa</strong></td></tr>
+              <tr><td><code>cascade = ALL</code></td><td>Lưu/xoá <code>Order</code> ⇒ lưu/xoá luôn các <code>OrderItem</code></td><td>Chỉ cho quan hệ <strong>sở hữu</strong> (cha-con), không cho <code>@ManyToOne</code> tới Product</td></tr>
+              <tr><td><code>orphanRemoval = true</code></td><td>Bỏ một <code>OrderItem</code> khỏi danh sách ⇒ <code>DELETE</code> nó</td><td>Hợp với aggregate (Order sở hữu Item)</td></tr>
+              <tr><td>Helper <code>addItem</code></td><td>Giữ hai chiều nhất quán</td><td>Đừng để code ngoài <code>items.add()</code> rồi quên set <code>order</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout callout-gotcha">
+          <div class="callout-label">⚠️ Mặc định <code>@ManyToOne</code> là EAGER — hãy đổi thành LAZY</div>
+          <p><code>@ManyToOne</code> và <code>@OneToOne</code> mặc định <code>FetchType.EAGER</code>: tải <code>Order</code> là tự động tải luôn <code>Customer</code> (kèm các quan hệ EAGER của Customer…) dù bạn không cần. <code>@OneToMany</code>/<code>@ManyToMany</code> mặc định LAZY. Quy tắc: **đặt mọi quan hệ <code>LAZY</code>** và chủ động nạp (<code>join fetch</code>/<code>@EntityGraph</code>) ở nơi cần.</p>
+        </div>
+
+        <h3 id="many-to-many">2.1. <code>@ManyToMany</code> — ít khi đủ dùng</h3>
+
+        <p>Quan hệ N-N (sinh viên ↔ môn học) có thể dùng <code>@ManyToMany @JoinTable</code>. Nhưng bảng nối hầu như luôn cần thêm cột (ngày đăng ký, điểm) ⇒ <strong>tạo entity trung gian</strong> (<code>Enrollment</code>) với hai <code>@ManyToOne</code> — chính là mẫu <code>OrderItem</code> ở trên. Chỉ dùng <code>@ManyToMany</code> thuần cho trường hợp thật sự không có dữ liệu gì thêm (nhãn/tag).</p>
+        <div class="java-note">
+          <h4><code>equals</code>/<code>hashCode</code> cho entity</h4>
+          <p>Hibernate đặt entity vào <code>Set</code>, so sánh chúng… nên <code>equals</code>/<code>hashCode</code> quan trọng. Cạm bẫy: dùng <code>id</code> (tự sinh) thì **<code>id</code> là <code>null</code> trước khi lưu**, làm <code>hashCode</code> đổi giữa chừng.</p>
+          <ul>
+            <li>Có <strong>business key</strong> bất biến (ISBN, email, mã vạch)? Dùng nó.</li>
+            <li>Không có? <code>equals</code> theo <code>id</code> (so sánh khi cả hai khác <code>null</code>), <code>hashCode</code> <strong>hằng số</strong> (<code>getClass().hashCode()</code>).</li>
+            <li>Không dùng <code>@Data</code>/<code>@EqualsAndHashCode</code> của Lombok trên entity — nó đưa cả quan hệ vào <code>hashCode</code>, dễ vòng lặp vô tận và kích hoạt lazy loading.</li>
+          </ul>
+        </div>
+
+        <h2 id="lazy">3. Lazy loading và <code>LazyInitializationException</code></h2>
+
+        <p>Quan hệ <code>LAZY</code> không tải ngay: Hibernate đặt một <strong>proxy</strong> thay chỗ, chỉ chạy <code>SELECT</code> khi bạn chạm vào dữ liệu thật. Vì cần persistence context (kết nối DB), nếu bạn chạm vào <em>sau khi transaction đã đóng</em>:</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Lỗi kinh điển</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Service</span>
+<span class="tok-kw">class</span> <span class="tok-cls">OrderService</span> {
+    <span class="tok-cls">Order</span> <span class="tok-fn">get</span>(<span class="tok-kw">long</span> id) { <span class="tok-kw">return</span> orderRepo.<span class="tok-fn">findById</span>(id).<span class="tok-fn">orElseThrow</span>(); }    <span class="tok-com">// transaction kết thúc ở đây</span>
+}
+
+<span class="tok-ann">@RestController</span>
+<span class="tok-kw">class</span> <span class="tok-cls">OrderController</span> {
+    <span class="tok-ann">@GetMapping</span>(<span class="tok-str">"/orders/{id}"</span>)
+    <span class="tok-cls">OrderDto</span> <span class="tok-fn">get</span>(<span class="tok-ann">@PathVariable</span> <span class="tok-kw">long</span> id) {
+        <span class="tok-cls">Order</span> o = service.<span class="tok-fn">get</span>(id);
+        <span class="tok-kw">return</span> <span class="tok-kw">new</span> <span class="tok-cls">OrderDto</span>(o.<span class="tok-fn">getId</span>(), o.<span class="tok-fn">getItems</span>().<span class="tok-fn">size</span>());               <span class="tok-com">// 💥 LazyInitializationException:</span>
+    }                                                                      <span class="tok-com">//    could not initialize proxy - no Session</span>
+}</code></pre>
+        </div>
+
+        <h3 id="open-in-view">3.1. Vì sao <code>open-in-view: false</code></h3>
+
+        <p>Mặc định Boot bật <strong>Open Session In View</strong> (OSIV): giữ persistence context mở suốt request — kể cả lúc controller serialize JSON — nên lỗi trên <em>không xảy ra</em>. Nghe tiện nhưng đánh đổi:</p>
+        <ul>
+          <li>Lazy loading âm thầm chạy <strong>ở tầng web</strong> (lúc serialize) ⇒ các câu <code>SELECT</code> ẩn, N+1 khó thấy.</li>
+          <li>Kết nối DB bị giữ lâu hơn cần thiết (suốt request, gồm cả ghi response) ⇒ <strong>cạn pool</strong>.</li>
+          <li>Che lấp lỗi thiết kế: service trả entity nửa vời cho controller.</li>
+        </ul>
+        <div class="java-rule">**Tắt OSIV (<code>spring.jpa.open-in-view=false</code>) và nạp đủ dữ liệu cần thiết <em>bên trong</em> tầng service<strong>, rồi trả </strong>DTO** ra ngoài. Lỗi <code>LazyInitializationException</code> khi đó là <em>chỉ dẫn hữu ích</em>: bạn chưa quyết định rõ cần nạp gì.</div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Cách đúng</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Service</span>
+<span class="tok-kw">class</span> <span class="tok-cls">OrderService</span> {
+
+    <span class="tok-ann">@Transactional</span>(readOnly = <span class="tok-kw">true</span>)
+    <span class="tok-cls">OrderDto</span> <span class="tok-fn">get</span>(<span class="tok-kw">long</span> id) {                                               <span class="tok-com">// map sang DTO TRONG transaction</span>
+        <span class="tok-cls">Order</span> o = orderRepo.<span class="tok-fn">findWithItemsById</span>(id).<span class="tok-fn">orElseThrow</span>(() -&gt; <span class="tok-kw">new</span> <span class="tok-cls">NotFoundException</span>(<span class="tok-str">"order"</span>, id));
+        <span class="tok-kw">return</span> <span class="tok-cls">OrderDto</span>.<span class="tok-fn">from</span>(o);
+    }
+}</code></pre>
+        </div>
+
+        <h2 id="n-plus-1">4. Bài toán N+1</h2>
+
+        <p>Lấy 20 đơn hàng rồi in số dòng hàng của mỗi đơn:</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Mã trông vô hại</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Transactional</span>(readOnly = <span class="tok-kw">true</span>)
+<span class="tok-kw">void</span> <span class="tok-fn">in</span>() {
+    <span class="tok-cls">List</span>&lt;<span class="tok-cls">Order</span>&gt; orders = orderRepo.<span class="tok-fn">findAll</span>();                  <span class="tok-com">// 1 câu: SELECT * FROM orders</span>
+    <span class="tok-kw">for</span> (<span class="tok-cls">Order</span> o : orders) {
+        <span class="tok-cls">System</span>.out.<span class="tok-fn">println</span>(o.<span class="tok-fn">getItems</span>().<span class="tok-fn">size</span>());               <span class="tok-com">// mỗi đơn 1 câu: SELECT * FROM order_item WHERE order_id = ?</span>
+    }
+}                                                              <span class="tok-com">// → 1 + 20 = 21 câu SQL; với 10.000 đơn là 10.001 câu</span></code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Log SQL</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-kw">select</span> o.id, o.status, o.customer_id <span class="tok-kw">from</span> orders o
+<span class="tok-kw">select</span> i.id, i.quantity <span class="tok-kw">from</span> order_item i <span class="tok-kw">where</span> i.order_id = <span class="tok-num">1</span>
+<span class="tok-kw">select</span> i.id, i.quantity <span class="tok-kw">from</span> order_item i <span class="tok-kw">where</span> i.order_id = <span class="tok-num">2</span>
+<span class="tok-kw">select</span> i.id, i.quantity <span class="tok-kw">from</span> order_item i <span class="tok-kw">where</span> i.order_id = <span class="tok-num">3</span>
+<span class="tok-com">-- ... lặp lại N lần</span></code></pre>
+        </div>
+        <div class="java-rule"><strong>N+1</strong> = 1 câu lấy danh sách cha + N câu lấy con của từng cha. Mỗi câu rất nhanh nhưng <em>tổng</em> làm chậm đều đặn và khó nhận ra trong dev (dữ liệu ít). Đây là nguyên nhân số một khiến API Spring+JPA "chậm không rõ lý do".</div>
+
+        <h3 id="phat-hien">4.1. Phát hiện</h3>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>application-dev.yml</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-cls">spring</span>:
+  <span class="tok-cls">jpa</span>:
+    <span class="tok-cls">properties</span>:
+      <span class="tok-cls">hibernate</span>:
+        <span class="tok-cls">generate_statistics</span>: <span class="tok-kw">true</span><span class="tok-com">                 # thống kê số câu lệnh</span>
+<span class="tok-cls">logging</span>:
+  <span class="tok-cls">level</span>:
+    <span class="tok-cls">org.hibernate.SQL</span>: DEBUG
+    <span class="tok-cls">org.hibernate.stat</span>: DEBUG<span class="tok-com">                     # in "executing N JDBC statements"</span></code></pre>
+        </div>
+        <p>Thói quen tốt: khi viết endpoint trả danh sách, <strong>luôn nhìn log SQL</strong> đếm số câu. Trong test, có thể assert số câu (thư viện <code>datasource-assert</code>, hoặc <code>Statistics.getPrepareStatementCount()</code>).</p>
+
+        <h3 id="sua-n-plus-1">4.2. Bốn cách sửa</h3>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>OrderRepository.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-kw">public</span> <span class="tok-kw">interface</span> <span class="tok-cls">OrderRepository</span> <span class="tok-kw">extends</span> <span class="tok-cls">JpaRepository</span>&lt;<span class="tok-cls">Order</span>, <span class="tok-cls">Long</span>&gt; {
+
+    <span class="tok-com">// (1) JOIN FETCH — nạp con trong CÙNG câu SQL (Hibernate 6 tự loại bản ghi trùng)</span>
+    <span class="tok-ann">@Query</span>(<span class="tok-str">"select o from Order o join fetch o.items where o.status = :status"</span>)
+    <span class="tok-cls">List</span>&lt;<span class="tok-cls">Order</span>&gt; <span class="tok-fn">findWithItems</span>(<span class="tok-ann">@Param</span>(<span class="tok-str">"status"</span>) <span class="tok-cls">OrderStatus</span> status);
+
+    <span class="tok-com">// (2) @EntityGraph — khai báo "nạp những gì" mà không viết JPQL; lồng nhiều cấp</span>
+    <span class="tok-ann">@EntityGraph</span>(attributePaths = {<span class="tok-str">"items"</span>, <span class="tok-str">"items.product"</span>, <span class="tok-str">"customer"</span>})
+    <span class="tok-cls">Optional</span>&lt;<span class="tok-cls">Order</span>&gt; <span class="tok-fn">findWithItemsById</span>(<span class="tok-cls">Long</span> id);
+
+    <span class="tok-com">// (3) DTO projection — chỉ lấy cột cần, không tải entity</span>
+    <span class="tok-ann">@Query</span>(<span class="tok-str">"""
+           select new vn.itbasic.shop.OrderRow(o.id, c.name, count(i), sum(i.unitPrice * i.quantity))
+           from Order o join o.customer c left join o.items i
+           group by o.id, c.name
+           """</span>)
+    <span class="tok-cls">List</span>&lt;<span class="tok-cls">OrderRow</span>&gt; <span class="tok-fn">findRows</span>();
+}</code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>application.yml — (4) batch fetch</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-cls">spring</span>:
+  <span class="tok-cls">jpa</span>:
+    <span class="tok-cls">properties</span>:
+      <span class="tok-cls">hibernate</span>:
+        <span class="tok-cls">default_batch_fetch_size</span>: <span class="tok-num">50</span><span class="tok-com">      # tải con của 50 cha một lượt: WHERE order_id IN (?, ?, … 50)</span>
+<span class="tok-com">                                          # 21 câu → 1 + ceil(20/50) = 2 câu — sửa "miễn phí" cho cả dự án</span></code></pre>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Cách</th><th>Ưu</th><th>Nhược</th><th>Khi nào</th></tr></thead>
+            <tbody>
+              <tr><td><code>join fetch</code> / <code>@EntityGraph</code></td><td>1 câu SQL</td><td>Nạp cả hai bảng; <strong>không</strong> kết hợp phân trang an toàn với collection; có thể nhân dòng</td><td>Lấy một/ít đối tượng kèm con</td></tr>
+              <tr><td><strong>DTO projection</strong></td><td>Nhanh nhất, ít dữ liệu</td><td>Phải viết query/DTO</td><td><strong>Danh sách, báo cáo, màn hình chỉ đọc</strong> — thường là lựa chọn tốt nhất</td></tr>
+              <tr><td><code>default_batch_fetch_size</code></td><td>Một dòng cấu hình, giảm N+1 thành ~N/size</td><td>Vẫn nhiều hơn 1 câu</td><td>Mặc định nên bật cho cả dự án</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout callout-gotcha">
+          <div class="callout-label">⚠️ Phân trang + <code>join fetch</code> collection</div>
+          <p><code>Page&lt;Order&gt;</code> kèm <code>join fetch o.items</code> khiến Hibernate cảnh báo <em>"firstResult/maxResults specified with collection fetch; applying in memory"</em> (HHH90003004): nó <strong>tải toàn bộ bảng vào RAM</strong> rồi cắt trang. Giải pháp: phân trang trên bảng cha trước (chỉ lấy <code>id</code>), rồi nạp con theo danh sách <code>id</code> — hoặc dùng <code>default_batch_fetch_size</code>. Và fetch hai <code>List</code> cùng lúc ném <code>MultipleBagFetchException</code> (dùng <code>Set</code> hoặc tách query).</p>
+        </div>
+
+        <h2 id="transaction">5. <code>@Transactional</code> — ranh giới của sự toàn vẹn</h2>
+
+        <p><strong>Transaction</strong> gom nhiều thao tác thành một đơn vị <strong>nguyên tử</strong>: hoặc tất cả thành công (<code>commit</code>), hoặc không gì cả (<code>rollback</code>) — nền tảng <strong>ACID</strong> (xem Database chương 6). Ví dụ kinh điển:</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>ChuyenTienService.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Service</span>
+<span class="tok-kw">class</span> <span class="tok-cls">ChuyenTienService</span> {
+
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">TaiKhoanRepository</span> repo;
+    <span class="tok-cls">ChuyenTienService</span>(<span class="tok-cls">TaiKhoanRepository</span> repo) { <span class="tok-kw">this</span>.repo = repo; }
+
+    <span class="tok-ann">@Transactional</span>                                       <span class="tok-com">// toàn bộ method = 1 transaction</span>
+    <span class="tok-kw">public</span> <span class="tok-kw">void</span> <span class="tok-fn">chuyen</span>(<span class="tok-kw">long</span> tuId, <span class="tok-kw">long</span> denId, <span class="tok-cls">BigDecimal</span> soTien) {
+        <span class="tok-cls">TaiKhoan</span> tu  = repo.<span class="tok-fn">findById</span>(tuId).<span class="tok-fn">orElseThrow</span>(() -&gt; <span class="tok-kw">new</span> <span class="tok-cls">NotFoundException</span>(<span class="tok-str">"account"</span>, tuId));
+        <span class="tok-cls">TaiKhoan</span> den = repo.<span class="tok-fn">findById</span>(denId).<span class="tok-fn">orElseThrow</span>(() -&gt; <span class="tok-kw">new</span> <span class="tok-cls">NotFoundException</span>(<span class="tok-str">"account"</span>, denId));
+
+        tu.<span class="tok-fn">rut</span>(soTien);                                  <span class="tok-com">// ném BusinessRuleException nếu không đủ số dư</span>
+        den.<span class="tok-fn">nap</span>(soTien);
+    }   <span class="tok-com">// thành công → COMMIT cả hai UPDATE. Có exception unchecked → ROLLBACK cả hai: không ai mất tiền oan</span>
+}</code></pre>
+        </div>
+
+        <h3 id="dat-o-dau">5.1. Đặt ở đâu?</h3>
+
+        <div class="java-rule">**<code>@Transactional</code> đặt ở tầng service, ở method thể hiện một <em>use case</em> trọn vẹn.** Không đặt ở controller (kéo transaction ra tầng web, giữ kết nối lâu), không đặt ở từng repository method (mỗi lệnh một transaction ⇒ mất tính nguyên tử của cả use case). Các method đọc thuần: <code>@Transactional(readOnly = true)</code>.</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Thuộc tính</th><th>Ý nghĩa</th><th>Mặc định</th></tr></thead>
+            <tbody>
+              <tr><td><code>readOnly = true</code></td><td>Gợi ý: không có ghi ⇒ Hibernate bỏ dirty checking (nhanh hơn, ít bộ nhớ), một số DB tối ưu</td><td><code>false</code></td></tr>
+              <tr><td><code>propagation</code></td><td>Cách tham gia khi đã có transaction (bảng dưới)</td><td><code>REQUIRED</code></td></tr>
+              <tr><td><code>isolation</code></td><td>Mức cô lập (xem Database ch6)</td><td>Mặc định của DB (PostgreSQL: <code>READ COMMITTED</code>)</td></tr>
+              <tr><td><code>timeout</code></td><td>Giây tối đa trước khi rollback</td><td>Không giới hạn</td></tr>
+              <tr><td><code>rollbackFor</code> / <code>noRollbackFor</code></td><td>Exception nào gây/không gây rollback</td><td>Chỉ <strong>unchecked</strong> (<code>RuntimeException</code>, <code>Error</code>)</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 id="rollback-rule">5.2. Quy tắc rollback — cạm bẫy số một</h3>
+
+        <div class="callout callout-warning">
+          <div class="callout-label">⚠️ Checked exception KHÔNG làm rollback</div>
+          <p>Mặc định Spring chỉ rollback khi gặp <strong>unchecked exception</strong>. <code>IOException</code>, <code>SQLException</code>, exception checked của bạn ⇒ transaction <strong>vẫn commit</strong> những gì đã ghi trước đó. Hoặc dùng exception unchecked cho lỗi nghiệp vụ (đúng như chương 5), hoặc khai báo rõ <code>@Transactional(rollbackFor = Exception.class)</code>.</p>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Hai bẫy khác</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Transactional</span>
+<span class="tok-kw">public</span> <span class="tok-kw">void</span> <span class="tok-fn">xuLy</span>() {
+    <span class="tok-kw">try</span> {
+        repo.<span class="tok-fn">save</span>(a);
+        <span class="tok-fn">riskyCall</span>();                 <span class="tok-com">// ném RuntimeException</span>
+    } <span class="tok-kw">catch</span> (<span class="tok-cls">RuntimeException</span> e) {
+        log.<span class="tok-fn">warn</span>(<span class="tok-str">"bỏ qua"</span>, e);       <span class="tok-com">// ❌ NUỐT exception ⇒ Spring không biết ⇒ COMMIT dữ liệu nửa vời</span>
+    }                                <span class="tok-com">// (và transaction có thể đã bị đánh dấu rollback-only ⇒ UnexpectedRollbackException)</span>
+}
+
+<span class="tok-ann">@Transactional</span>
+<span class="tok-kw">public</span> <span class="tok-kw">void</span> <span class="tok-fn">guiMailRoiLuu</span>() {
+    repo.<span class="tok-fn">save</span>(order);
+    mailApi.<span class="tok-fn">send</span>(order);             <span class="tok-com">// ❌ gọi mạng CHẬM trong transaction ⇒ giữ kết nối DB suốt thời gian chờ ⇒ cạn pool</span>
+}</code></pre>
+        </div>
+
+        <h3 id="propagation">5.3. Propagation — transaction gọi transaction</h3>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Propagation</th><th>Khi đã có transaction</th><th>Khi chưa có</th><th>Dùng cho</th></tr></thead>
+            <tbody>
+              <tr><td>**<code>REQUIRED</code>** (mặc định)</td><td>Tham gia transaction hiện tại</td><td>Tạo mới</td><td>99% trường hợp</td></tr>
+              <tr><td><code>REQUIRES_NEW</code></td><td><strong>Treo</strong> cái cũ, mở transaction <strong>mới độc lập</strong></td><td>Tạo mới</td><td>Ghi log kiểm toán phải còn dù nghiệp vụ rollback</td></tr>
+              <tr><td><code>MANDATORY</code></td><td>Tham gia</td><td>Ném lỗi</td><td>Method <em>bắt buộc</em> chạy trong transaction của người gọi</td></tr>
+              <tr><td><code>SUPPORTS</code></td><td>Tham gia</td><td>Chạy không transaction</td><td>Đọc không quan trọng</td></tr>
+              <tr><td><code>NOT_SUPPORTED</code></td><td>Treo transaction</td><td>Không transaction</td><td>Tác vụ không nên nằm trong transaction</td></tr>
+              <tr><td><code>NEVER</code></td><td>Ném lỗi</td><td>Không transaction</td><td>Hiếm</td></tr>
+              <tr><td><code>NESTED</code></td><td>Savepoint trong transaction cha</td><td>Tạo mới</td><td>Hiếm (cần JDBC savepoint)</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>REQUIRES_NEW — audit log luôn được ghi</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Service</span>
+<span class="tok-kw">class</span> <span class="tok-cls">AuditService</span> {
+    <span class="tok-ann">@Transactional</span>(propagation = <span class="tok-cls">Propagation</span>.<span class="tok-cls">REQUIRES_NEW</span>)    <span class="tok-com">// giao dịch riêng: commit độc lập</span>
+    <span class="tok-kw">public</span> <span class="tok-kw">void</span> <span class="tok-fn">ghi</span>(<span class="tok-cls">String</span> hanhDong, <span class="tok-cls">String</span> chiTiet) { auditRepo.<span class="tok-fn">save</span>(<span class="tok-kw">new</span> <span class="tok-cls">AuditLog</span>(hanhDong, chiTiet)); }
+}
+
+<span class="tok-ann">@Service</span>
+<span class="tok-kw">class</span> <span class="tok-cls">TienService</span> {
+    <span class="tok-ann">@Transactional</span>
+    <span class="tok-kw">public</span> <span class="tok-kw">void</span> <span class="tok-fn">rut</span>(...) {
+        audit.<span class="tok-fn">ghi</span>(<span class="tok-str">"RUT_TIEN_BAT_DAU"</span>, <span class="tok-str">"..."</span>);     <span class="tok-com">// bean KHÁC ⇒ đi qua proxy ⇒ transaction mới</span>
+        <span class="tok-com">// ... nghiệp vụ lỗi → rollback transaction này, nhưng dòng audit đã commit ở transaction riêng</span>
+    }
+}</code></pre>
+        </div>
+
+        <h3 id="sau-commit">5.4. Việc phụ chỉ làm <em>sau khi commit</em></h3>
+
+        <p>Gửi email xác nhận đơn <strong>khi transaction chưa commit</strong> là sai: nếu commit thất bại, khách nhận email về đơn không tồn tại. Dùng sự kiện gắn với pha commit:</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>TransactionalEventListener</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Transactional</span>
+<span class="tok-kw">public</span> <span class="tok-cls">Order</span> <span class="tok-fn">datHang</span>(...) {
+    <span class="tok-cls">Order</span> o = orderRepo.<span class="tok-fn">save</span>(...);
+    events.<span class="tok-fn">publishEvent</span>(<span class="tok-kw">new</span> <span class="tok-cls">OrderPlacedEvent</span>(o.<span class="tok-fn">getId</span>()));      <span class="tok-com">// chưa gửi gì cả</span>
+    <span class="tok-kw">return</span> o;
+}
+
+<span class="tok-ann">@Component</span>
+<span class="tok-kw">class</span> <span class="tok-cls">MailListener</span> {
+    <span class="tok-ann">@TransactionalEventListener</span>(phase = <span class="tok-cls">TransactionPhase</span>.<span class="tok-cls">AFTER_COMMIT</span>)    <span class="tok-com">// chỉ chạy khi commit THÀNH CÔNG</span>
+    <span class="tok-ann">@Async</span>                                                                  <span class="tok-com">// và không chặn request (chương 12)</span>
+    <span class="tok-kw">void</span> <span class="tok-fn">onOrderPlaced</span>(<span class="tok-cls">OrderPlacedEvent</span> e) { mail.<span class="tok-fn">guiXacNhan</span>(e.<span class="tok-fn">orderId</span>()); }
+}</code></pre>
+        </div>
+
+        <h2 id="lost-update">6. Hai người sửa cùng một dòng — khoá lạc quan</h2>
+
+        <p>Hai nhân viên cùng mở sản phẩm <code>X</code> (số lượng 10). A bán 3 và lưu (7). B — vẫn thấy 10 — bán 2 và lưu (8). Kết quả 8 thay vì 5: <strong>lost update</strong>, bản ghi của A bị ghi đè lặng lẽ.</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Khoá lạc quan với @Version</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Entity</span>
+<span class="tok-kw">public</span> <span class="tok-kw">class</span> <span class="tok-cls">Product</span> {
+    <span class="tok-com">// ...</span>
+    <span class="tok-ann">@Version</span>
+    <span class="tok-kw">private</span> <span class="tok-kw">long</span> version;           <span class="tok-com">// Hibernate tự tăng mỗi lần UPDATE</span>
+}
+<span class="tok-com">// Mỗi UPDATE do Hibernate sinh ra có thêm điều kiện:</span>
+<span class="tok-com">//   UPDATE products SET quantity=?, version=2 WHERE id=? AND version=1</span>
+<span class="tok-com">// Nếu 0 dòng bị ảnh hưởng (ai đó đã đổi version) → ném ObjectOptimisticLockingFailureException</span></code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Dịch thành 409 (chương 5)</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@ExceptionHandler</span>(<span class="tok-cls">ObjectOptimisticLockingFailureException</span>.<span class="tok-kw">class</span>)
+<span class="tok-cls">ResponseEntity</span>&lt;<span class="tok-cls">ProblemDetail</span>&gt; <span class="tok-fn">staleData</span>(<span class="tok-cls">ObjectOptimisticLockingFailureException</span> ex) {
+    <span class="tok-cls">ProblemDetail</span> pd = <span class="tok-cls">ProblemDetail</span>.<span class="tok-fn">forStatusAndDetail</span>(<span class="tok-cls">HttpStatus</span>.<span class="tok-cls">CONFLICT</span>,
+            <span class="tok-str">"Dữ liệu đã bị người khác thay đổi. Hãy tải lại rồi thử lại."</span>);
+    pd.<span class="tok-fn">setProperty</span>(<span class="tok-str">"code"</span>, <span class="tok-str">"STALE_DATA"</span>);
+    <span class="tok-kw">return</span> <span class="tok-cls">ResponseEntity</span>.<span class="tok-fn">status</span>(<span class="tok-cls">HttpStatus</span>.<span class="tok-cls">CONFLICT</span>).<span class="tok-fn">body</span>(pd);
+}</code></pre>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th></th><th>Khoá lạc quan (<code>@Version</code>)</th><th>Khoá bi quan (<code>PESSIMISTIC_WRITE</code>)</th></tr></thead>
+            <tbody>
+              <tr><td>Giả định</td><td>Xung đột <strong>hiếm</strong> — cứ làm, kiểm tra lúc ghi</td><td>Xung đột <strong>thường xuyên</strong> — khoá trước</td></tr>
+              <tr><td>Cơ chế</td><td>Cột <code>version</code> + điều kiện <code>WHERE version = ?</code></td><td><code>SELECT … FOR UPDATE</code> giữ khoá hàng</td></tr>
+              <tr><td>Chi phí</td><td>Không giữ khoá ⇒ nhanh, mở rộng tốt</td><td>Chặn người khác; nguy cơ <strong>deadlock</strong>, chờ lâu</td></tr>
+              <tr><td>Khi lỗi</td><td>Ném exception → thử lại / báo người dùng</td><td>Người sau chờ (hoặc timeout)</td></tr>
+              <tr><td>Dùng cho</td><td>Hầu hết ứng dụng CRUD, form chỉnh sửa</td><td>Tồn kho "nóng", số dư, tranh chấp cao</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Khoá bi quan</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-kw">public</span> <span class="tok-kw">interface</span> <span class="tok-cls">TaiKhoanRepository</span> <span class="tok-kw">extends</span> <span class="tok-cls">JpaRepository</span>&lt;<span class="tok-cls">TaiKhoan</span>, <span class="tok-cls">Long</span>&gt; {
+    <span class="tok-ann">@Lock</span>(<span class="tok-cls">LockModeType</span>.<span class="tok-cls">PESSIMISTIC_WRITE</span>)
+    <span class="tok-ann">@Query</span>(<span class="tok-str">"select t from TaiKhoan t where t.id = :id"</span>)
+    <span class="tok-cls">Optional</span>&lt;<span class="tok-cls">TaiKhoan</span>&gt; <span class="tok-fn">findByIdForUpdate</span>(<span class="tok-ann">@Param</span>(<span class="tok-str">"id"</span>) <span class="tok-kw">long</span> id);      <span class="tok-com">// SELECT … FOR UPDATE</span>
+}
+<span class="tok-com">// Chuyển tiền giữa hai tài khoản: LUÔN khoá theo thứ tự id tăng dần để tránh deadlock (A→B và B→A cùng lúc)</span></code></pre>
+        </div>
+        <p>Với khoá lạc quan, thông thường client sẽ gửi kèm <code>version</code> (hoặc dùng <code>ETag</code>/<code>If-Match</code>) để phát hiện cả xung đột <em>giữa các request HTTP khác nhau</em>, không chỉ trong một transaction.</p>
+
+        <h2 id="flyway">7. Flyway — migration schema có phiên bản</h2>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>pom.xml</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-kw">&lt;dependency</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;groupId</span><span class="tok-kw">&gt;</span>org.flywaydb<span class="tok-kw">&lt;/groupId</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;artifactId</span><span class="tok-kw">&gt;</span>flyway-core<span class="tok-kw">&lt;/artifactId</span><span class="tok-kw">&gt;</span>
+<span class="tok-kw">&lt;/dependency</span><span class="tok-kw">&gt;</span>
+<span class="tok-kw">&lt;dependency</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;groupId</span><span class="tok-kw">&gt;</span>org.flywaydb<span class="tok-kw">&lt;/groupId</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;artifactId</span><span class="tok-kw">&gt;</span>flyway-database-postgresql<span class="tok-kw">&lt;/artifactId</span><span class="tok-kw">&gt;</span>   <span class="tok-com">&lt;!-- Flyway 10+: module riêng cho từng DB --&gt;</span>
+<span class="tok-kw">&lt;/dependency</span><span class="tok-kw">&gt;</span></code></pre>
+        </div>
+        <div class="hierarchy"><pre>src/main/resources/db/migration/
+├── V1__create_products.sql          ← V + số phiên bản + __ + mô tả
+├── V2__create_orders.sql
+├── V3__add_products_sku.sql
+└── R__refresh_views.sql             ← "R" = repeatable: chạy lại khi nội dung đổi</pre></div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>V3__add_products_sku.sql</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-kw">alter</span> <span class="tok-kw">table</span> products add column sku <span class="tok-kw">varchar</span>(<span class="tok-num">40</span>);
+<span class="tok-kw">update</span> products <span class="tok-kw">set</span> sku = <span class="tok-str">'SKU-'</span> || id <span class="tok-kw">where</span> sku is <span class="tok-kw">null</span>;      <span class="tok-com">-- điền dữ liệu cho dòng cũ</span>
+<span class="tok-kw">alter</span> <span class="tok-kw">table</span> products <span class="tok-kw">alter</span> column sku <span class="tok-kw">set</span> <span class="tok-kw">not</span> <span class="tok-kw">null</span>;
+<span class="tok-kw">create</span> <span class="tok-kw">unique</span> <span class="tok-kw">index</span> uq_products_sku <span class="tok-kw">on</span> products (sku);</code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>application.yml</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-cls">spring</span>:
+  <span class="tok-cls">jpa</span>:
+    <span class="tok-cls">hibernate</span>:
+      <span class="tok-cls">ddl-auto</span>: validate<span class="tok-com">           # Hibernate chỉ KIỂM TRA — Flyway mới là bên thay đổi schema</span>
+  <span class="tok-cls">flyway</span>:
+    <span class="tok-cls">enabled</span>: <span class="tok-kw">true</span><span class="tok-com">                  # mặc định; chạy trước khi JPA khởi tạo</span>
+    <span class="tok-cls">baseline-on-migrate</span>: <span class="tok-kw">false</span><span class="tok-com">     # =true chỉ khi áp Flyway vào DB đã có sẵn dữ liệu</span></code></pre>
+        </div>
+        <div class="java-rule"><strong>Không bao giờ sửa một migration đã chạy.</strong> Flyway lưu <em>checksum</em> mỗi file trong <code>flyway_schema_history</code>; sửa nội dung ⇒ lần khởi động sau báo <em>Checksum mismatch</em> và dừng. Muốn đổi? Viết migration <strong>mới</strong> (<code>V4__…</code>). Quy trình: migration chạy tự động lúc ứng dụng khởi động; trong CI/CD nên chạy migration <strong>trước</strong> khi triển khai code mới, và thay đổi phải <em>tương thích ngược</em> (thêm cột trước, bỏ cột sau một bản phát hành).</div>
+        <div class="callout callout-tip">
+          <div class="callout-label">💡 Thay đổi phá vỡ: expand → migrate → contract</div>
+          <p>Đổi tên cột <code>name</code> → <code>full_name</code> không nên làm một bước (bản code cũ đang chạy vẫn đọc <code>name</code>). Làm ba bản phát hành: (1) thêm <code>full_name</code>, code ghi cả hai; (2) chuyển dữ liệu &amp; code đọc <code>full_name</code>; (3) bỏ <code>name</code>. Đây là cách triển khai <strong>zero-downtime</strong>.</p>
+        </div>
+
+        <h2 id="cheat-sheet">8. Cheat sheet chương 7</h2>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Triệu chứng</th><th>Nguyên nhân hay gặp</th><th>Cách xử lý</th></tr></thead>
+            <tbody>
+              <tr><td>Đổi field không lưu</td><td>Thiếu <code>@Transactional</code> ⇒ entity detached</td><td>Thêm <code>@Transactional</code> ở service</td></tr>
+              <tr><td><code>LazyInitializationException</code></td><td>Chạm quan hệ LAZY sau khi transaction đóng</td><td>Nạp trong service (<code>@EntityGraph</code>/<code>join fetch</code>), trả DTO</td></tr>
+              <tr><td>API chậm, nhiều câu SQL giống nhau</td><td>N+1</td><td>DTO projection / <code>@EntityGraph</code> / <code>default_batch_fetch_size</code></td></tr>
+              <tr><td><code>@Transactional</code> không có tác dụng</td><td>Self-invocation / method không public / checked exception</td><td>Chương 2 mục 9; <code>rollbackFor</code></td></tr>
+              <tr><td>Dữ liệu nửa vời sau lỗi</td><td>Nuốt exception / checked exception</td><td>Để exception nổi lên; unchecked</td></tr>
+              <tr><td>Mất cập nhật</td><td>Hai người sửa cùng bản ghi</td><td><code>@Version</code> → 409</td></tr>
+              <tr><td>Cạn connection pool</td><td>Transaction dài / gọi mạng trong transaction</td><td>Rút ngắn; tách I/O ra ngoài</td></tr>
+              <tr><td>Đổi schema</td><td>—</td><td>Flyway migration mới; <code>ddl-auto: validate</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="bai-tap">Bài tập</h2>
+
+        <div class="exercises">
+
+          <div class="exercise">
+            <h4>Quan sát dirty checking</h4>
+            <div class="exercise-body">
+              <p>Viết <code>doiTen(long id, String ten)</code> đổi tên sản phẩm <strong>không</strong> gọi <code>save()</code>.</p>
+              <ul>
+                <li>Thử có <code>@Transactional</code> và không có — chuyện gì xảy ra với DB? Giải thích bằng persistence context.</li>
+                <li>Bật log SQL: có mấy câu <code>UPDATE</code>? Gọi <code>changePrice</code> với cùng giá trị cũ — có <code>UPDATE</code> không?</li>
+                <li>Thêm <code>@Transactional(readOnly = true)</code> rồi đổi field — kết quả?</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Không có transaction: entity detached, không UPDATE. Cùng giá trị: Hibernate so sánh snapshot ⇒ không có thay đổi ⇒ không UPDATE. <code>readOnly = true</code>: Hibernate bỏ dirty checking ⇒ thay đổi <strong>không</strong> được lưu (và một số cấu hình còn chặn ghi).</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Dựng, đo, sửa N+1</h4>
+            <div class="exercise-body">
+              <p>Tạo 50 <code>Order</code>, mỗi đơn 5 <code>OrderItem</code>. Viết <code>GET /api/orders</code> trả danh sách <code>OrderDto(id, customerName, itemCount)</code>.</p>
+              <ul>
+                <li>Phiên bản ngây thơ: đếm số câu SQL.</li>
+                <li>Sửa bằng <strong>bốn cách</strong> ở mục 4.2 và đếm lại từng cách.</li>
+                <li>Cách nào cho DTO danh sách? Vì sao?</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Ngây thơ: 1 + 50 (items) + có thể thêm 50 (customer nếu EAGER). <code>@EntityGraph</code>/<code>join fetch</code>: 1. Batch size 50: 2-3. DTO projection (<code>count(i)</code> + group by): 1 và ít dữ liệu nhất — hợp danh sách chỉ đọc.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Rollback rule</h4>
+            <div class="exercise-body">
+              <p>Viết service <code>luuRoiBaoLoi</code> ghi một bản ghi rồi ném: (a) <code>RuntimeException</code>, (b) <code>Exception</code> checked tự định nghĩa.</p>
+              <ul>
+                <li>Bản ghi có còn trong DB không ở mỗi trường hợp?</li>
+                <li>Sửa (b) để rollback bằng 2 cách.</li>
+                <li>Thử <code>try/catch</code> nuốt exception trong (a): kết quả? Vì sao?</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>(a) rollback; (b) <strong>commit</strong> (!). Sửa: <code>@Transactional(rollbackFor = Exception.class)</code> hoặc đổi sang unchecked. Nuốt exception ⇒ Spring không thấy ⇒ commit (nếu exception không đến từ ranh giới proxy), hoặc <code>UnexpectedRollbackException</code> nếu một transaction lồng đã đánh dấu rollback-only.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Lost update</h4>
+            <div class="exercise-body">
+              <p>Viết test dùng hai thread cùng đọc sản phẩm có <code>quantity=10</code>, một thread trừ 3, một thread trừ 2, cùng lưu (dùng <code>CountDownLatch</code> để chúng đọc trước rồi mới ghi).</p>
+              <ul>
+                <li>Không có <code>@Version</code>: số cuối là bao nhiêu?</li>
+                <li>Thêm <code>@Version</code>: một thread nhận exception gì? Viết handler → 409.</li>
+                <li>Viết logic thử lại tối đa 3 lần cho thread thua cuộc.</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Không <code>@Version</code>: 7 hoặc 8 (mất một cập nhật). Có <code>@Version</code>: <code>ObjectOptimisticLockingFailureException</code>. Thử lại phải <strong>đọc lại</strong> entity (dữ liệu mới) trong transaction mới — không dùng lại object cũ.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Migration đầu tiên</h4>
+            <div class="exercise-body">
+              <p>Thêm Flyway; viết <code>V1</code> tạo bảng <code>products</code>, <code>V2</code> thêm cột <code>sku</code> (not null, unique, điền dữ liệu cho dòng cũ).</p>
+              <ul>
+                <li>Chuyển <code>ddl-auto</code> sang <code>validate</code>; khởi động trên DB trống.</li>
+                <li>Sửa nội dung <code>V1</code> rồi khởi động lại — lỗi gì? Vì sao đó là điều <em>tốt</em>?</li>
+                <li>Viết kế hoạch 3 bản phát hành để đổi tên cột <code>name</code> → <code>full_name</code> không downtime.</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Lỗi <em>Validate failed: Migration checksum mismatch for migration version 1</em>. Tốt vì đảm bảo mọi môi trường có lịch sử schema giống hệt nhau. Kế hoạch 3 bước: expand (thêm cột, ghi cả hai) → migrate (backfill, đọc cột mới) → contract (bỏ cột cũ).</p>
+                </div>
+              </details>
+            </div>
+          </div>
+        </div>
+
+        <h2 id="quiz">Quiz</h2>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q1</span>
+            <div class="quiz-q-text"><p>Persistence context là gì? Vì sao đổi field của entity managed không cần <code>save()</code>?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Là vùng bộ nhớ (gắn với một transaction/<code>EntityManager</code>) giữ các entity đã tải cùng <strong>snapshot</strong> trạng thái ban đầu. Lúc commit/flush, Hibernate so sánh trạng thái hiện tại với snapshot (<strong>dirty checking</strong>) và tự sinh <code>UPDATE</code> cho entity thay đổi. Vì vậy cần entity ở trạng thái <em>managed</em> (trong transaction).</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q2</span>
+            <div class="quiz-q-text"><p>Owning side và <code>mappedBy</code> nghĩa là gì?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Trong quan hệ hai chiều, <strong>owning side</strong> là phía giữ cột khoá ngoại (có <code>@JoinColumn</code>, thường là <code>@ManyToOne</code>) — chỉ phía này quyết định giá trị FK khi ghi. Phía còn lại (<code>@OneToMany(mappedBy="order")</code>) chỉ là <em>bản đồ ngược</em>. Thiếu <code>mappedBy</code> ⇒ Hibernate tạo bảng nối thừa.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q3</span>
+            <div class="quiz-q-text"><p><code>LazyInitializationException</code> do đâu? Cách sửa đúng?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Chạm vào quan hệ <code>LAZY</code> sau khi persistence context đã đóng (hết transaction). Sửa đúng: <strong>nạp dữ liệu cần thiết trong service</strong> (<code>@EntityGraph</code>, <code>join fetch</code>, hoặc DTO projection) và trả DTO; tắt OSIV. Không sửa bằng cách đổi sang <code>EAGER</code> toàn cục — đó là kéo thêm vấn đề hiệu năng.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q4</span>
+            <div class="quiz-q-text"><p>N+1 query là gì? Nêu các cách khắc phục và chọn cách cho API trả danh sách.</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>1 câu lấy N cha + N câu lấy con. Cách sửa: <code>join fetch</code>/<code>@EntityGraph</code> (1 câu, nạp cả hai), <code>default_batch_fetch_size</code> (gom <code>IN (…)</code>), <strong>DTO projection</strong> (1 câu, ít dữ liệu nhất). Cho danh sách chỉ đọc: DTO projection thường tốt nhất; cẩn thận phân trang + <code>join fetch</code> collection (phân trang trong bộ nhớ).</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q5</span>
+            <div class="quiz-q-text"><p>Khi nào <code>@Transactional</code> <em>không</em> rollback? Nêu ít nhất ba tình huống.</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <ul>
+                <li>Exception là <strong>checked</strong> và không khai <code>rollbackFor</code>.</li>
+                <li>Exception bị <strong>catch và nuốt</strong> trong method.</li>
+                <li><strong>Self-invocation</strong> hoặc method không <code>public</code> — proxy không chặn nên không có transaction.</li>
+                <li>Đặt trên lớp/<code>final</code> mà proxy không tạo được.</li>
+              </ul>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q6</span>
+            <div class="quiz-q-text"><p>Khoá lạc quan hoạt động ra sao và khi nào dùng khoá bi quan?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p><code>@Version</code> thêm cột phiên bản; <code>UPDATE … WHERE id=? AND version=?</code> — nếu không dòng nào được cập nhật, nghĩa là ai đó đã sửa trước ⇒ ném <code>ObjectOptimisticLockingFailureException</code> (dịch thành 409). Không giữ khoá nên mở rộng tốt. Dùng khoá bi quan (<code>SELECT … FOR UPDATE</code>) khi xung đột <em>thường xuyên</em> (số dư, tồn kho nóng) và chấp nhận chi phí chờ/deadlock.</p>
+            </div>
+          </details>
+        </div>
+
+        <h2 id="tong-ket">Tổng kết</h2>
+
+        <p>Sau chương 7, bạn đã nắm:</p>
+        <ul>
+          <li><strong>Persistence context</strong> theo dõi entity managed; <strong>dirty checking</strong> tự <code>UPDATE</code> lúc commit — cần <code>@Transactional</code>.</li>
+          <li>Quan hệ: <strong>owning side</strong> giữ FK, <code>mappedBy</code> ở phía kia; <code>cascade</code>/<code>orphanRemoval</code> chỉ cho cha-con; **mọi quan hệ đặt <code>LAZY</code>**; N-N có dữ liệu ⇒ entity trung gian.</li>
+          <li><strong>Tắt OSIV</strong>, nạp đủ dữ liệu trong service, trả <strong>DTO</strong> ⇒ không còn <code>LazyInitializationException</code> bất ngờ.</li>
+          <li><strong>N+1</strong>: đếm câu SQL trong log; sửa bằng DTO projection / <code>@EntityGraph</code> / <code>default_batch_fetch_size</code>.</li>
+          <li>**<code>@Transactional</code>** ở service, theo use case; <code>readOnly</code> cho đọc; chỉ rollback với <strong>unchecked</strong> (hoặc <code>rollbackFor</code>); không nuốt exception; không gọi mạng chậm trong transaction.</li>
+          <li>**<code>@Version</code>** chống lost update → 409; khoá bi quan cho tranh chấp cao, khoá theo thứ tự cố định.</li>
+          <li><strong>Flyway</strong>: schema có phiên bản, không sửa migration đã chạy, <code>ddl-auto: validate</code>; thay đổi phá vỡ theo expand-migrate-contract.</li>
+        </ul>
+
+        <h2 id="ket-noi">Kết nối</h2>
+        <ul>
+          <li><strong>Chương 2</strong> — <code>@Transactional</code> là proxy; self-invocation. Mục 5 ở đây dựa hoàn toàn vào đó.</li>
+          <li><strong>Chương 5</strong> — exception nghiệp vụ unchecked khớp quy tắc rollback; 409 cho xung đột phiên bản.</li>
+          <li><strong>Chương 8</strong> — DTO &amp; MapStruct: lối ra cho <code>LazyInitializationException</code> và entity lộ ra ngoài.</li>
+          <li><strong>Chương 11</strong> — Testcontainers với PostgreSQL thật để kiểm thử migration, N+1, khoá lạc quan.</li>
+          <li><strong>Chương 12</strong> — <code>@TransactionalEventListener</code> + <code>@Async</code>, outbox pattern cho message đáng tin cậy.</li>
+          <li><strong>Database chương 5-8</strong> — index, ACID/isolation, MVCC, execution plan: kiến thức nền để hiểu SQL Hibernate sinh ra.</li>
+          <li><strong>Java chương 12-13</strong> — đa luồng và JDBC transaction thủ công: so với <code>@Transactional</code> ở đây.</li>
+        </ul>
+
+        <nav class="chapter-nav">
+          <a href="chuong6.html" class="prev">
+            <div class="dir">← Chương 6</div>
+            <div class="label">Spring Data JPA</div>
+          </a>
+          <a href="chuong8.html" class="next">
+            <div class="dir">Chương 8 →</div>
+            <div class="label">Kiến trúc tầng, DTO &amp;amp; OpenAPI</div>
+          </a>
+        </nav>
+
+      </main>
+
+      <aside class="toc">
+        <div class="toc-label">Trong chương này</div>
+        <ul>
+          <li><a href="#persistence-context">1. Persistence context — bộ nhớ làm việc của JPA</a></li>
+          <li class="level-3"><a href="#dirty-checking">1.1. Dirty checking — đổi field là đủ</a></li>
+          <li class="level-3"><a href="#first-level-cache">1.2. Bộ nhớ đệm cấp 1</a></li>
+          <li><a href="#quan-he">2. Quan hệ giữa các entity</a></li>
+          <li class="level-3"><a href="#many-to-many">2.1. <code>@ManyToMany</code> — ít khi đủ dùng</a></li>
+          <li><a href="#lazy">3. Lazy loading và <code>LazyInitializationException</code></a></li>
+          <li class="level-3"><a href="#open-in-view">3.1. Vì sao <code>open-in-view: false</code></a></li>
+          <li><a href="#n-plus-1">4. Bài toán N+1</a></li>
+          <li class="level-3"><a href="#phat-hien">4.1. Phát hiện</a></li>
+          <li class="level-3"><a href="#sua-n-plus-1">4.2. Bốn cách sửa</a></li>
+          <li><a href="#transaction">5. <code>@Transactional</code> — ranh giới của sự toàn vẹn</a></li>
+          <li class="level-3"><a href="#dat-o-dau">5.1. Đặt ở đâu?</a></li>
+          <li class="level-3"><a href="#rollback-rule">5.2. Quy tắc rollback — cạm bẫy số một</a></li>
+          <li class="level-3"><a href="#propagation">5.3. Propagation — transaction gọi transaction</a></li>
+          <li class="level-3"><a href="#sau-commit">5.4. Việc phụ chỉ làm <em>sau khi commit</em></a></li>
+          <li><a href="#lost-update">6. Hai người sửa cùng một dòng — khoá lạc quan</a></li>
+          <li><a href="#flyway">7. Flyway — migration schema có phiên bản</a></li>
+          <li><a href="#cheat-sheet">8. Cheat sheet chương 7</a></li>
+          <li><a href="#bai-tap">Bài tập</a></li>
+          <li><a href="#quiz">Quiz</a></li>
+          <li><a href="#tong-ket">Tổng kết</a></li>
+          <li><a href="#ket-noi">Kết nối</a></li>
+        </ul>
+      </aside>
+
+    </div>
+  </div>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p>
+        Chương 7 — JPA nâng cao &amp;amp; Transaction · Spring Boot sub-pillar · Pillar 9 IT Basic<br/>
+        <a href="chuong6.html">← Chương 6</a> · <a href="../index.html">Spring Boot TOC</a> · <a href="chuong8.html">Chương 8 →</a>
+      </p>
+    </div>
+  </footer>
+
+  <script src="../../shared/js/chapter.js"></script>
+</body>
+</html>

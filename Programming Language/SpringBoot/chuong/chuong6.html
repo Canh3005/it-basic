@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chương 6 — Spring Data JPA — nói chuyện với CSDL không cần viết JDBC · Spring Boot Sub-pillar</title>
+  <meta name="description" content="JPA, Hibernate và Spring Data JPA khác nhau thế nào; cấu hình PostgreSQL và HikariCP; entity, JpaRepository, derived query, @Query, projection, phân trang và sắp xếp; quản lý schema." />
+  <meta name="theme-color" content="#4a9a28" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Bitter:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="../../shared/css/base.css">
+  <link rel="stylesheet" href="../css/theme.css">
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="container">
+      <a class="site-logo" href="../../../index.html">
+        <span class="mark mark-spring">Sb</span>
+        Spring Boot · IT Basic
+      </a>
+      <nav>
+        <ul class="site-nav">
+          <li><a href="../../../index.html">IT Basic</a></li>
+          <li><a href="../../index.html">Pillar 9</a></li>
+          <li><a href="../../Java/index.html">Java</a></li>
+          <li><a href="../index.html" class="active">Spring Boot</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <div class="container">
+    <header class="chapter-header">
+      <div class="breadcrumb">
+        <a href="../../../index.html">IT Basic</a><span class="sep">/</span>
+        <a href="../../index.html">Pillar 9</a><span class="sep">/</span>
+        <a href="../index.html">Spring Boot</a><span class="sep">/</span>
+        <span>Chương 6</span>
+      </div>
+      <div class="chapter-num">Chương 06 · Spring Data JPA</div>
+      <h1 style="font-size: 2.6rem; margin: 0 0 12px; color: var(--ink);">
+        Spring Data JPA — nói chuyện với CSDL không cần viết JDBC
+      </h1>
+      <p class="lead">
+        Ở sub-pillar Java (chương 13) bạn đã viết JDBC bằng tay: mở kết nối, <code>PreparedStatement</code>, duyệt <code>ResultSet</code>, ánh xạ từng cột. Làm vài lần thì ổn, làm cho 50 bảng thì kiệt sức. <strong>JPA</strong> cho phép bạn làm việc với <em>đối tượng Java</em> và để thư viện sinh SQL; <strong>Spring Data JPA</strong> đi thêm một bước: bạn chỉ khai báo <em>interface</em>, nó tự sinh cài đặt. Chương này dựng lớp truy cập dữ liệu cho API ở chương 4-5.
+      </p>
+      <div class="chapter-meta">
+        <span class="item"><strong>Bài tập:</strong> 5</span>
+        <span class="item"><strong>Quiz:</strong> 6</span>
+        <span class="item"><strong>Prerequisites:</strong> Chương 1-5</span>
+      </div>
+    </header>
+
+    <div class="layout">
+
+      <main class="prose">
+
+        <div class="callout callout-goal">
+          <div class="callout-label">🎯 Mục tiêu chương</div>
+          <ul>
+            <li>Phân biệt <strong>JPA</strong> (đặc tả), <strong>Hibernate</strong> (cài đặt) và <strong>Spring Data JPA</strong> (lớp tiện ích).</li>
+            <li>Cấu hình <strong>PostgreSQL</strong> + <strong>HikariCP</strong> trong Spring Boot.</li>
+            <li>Viết <strong>entity</strong> đúng cách: <code>@Entity</code>, <code>@Id</code>, <code>@GeneratedValue</code>, <code>@Column</code>, <code>@Enumerated</code>, auditing.</li>
+            <li>Dùng **<code>JpaRepository</code><strong> và </strong>derived query** (<code>findByEmailAndStatus</code>).</li>
+            <li>Viết truy vấn tuỳ biến với **<code>@Query</code><strong> (JPQL &amp; native) và </strong>projection**.</li>
+            <li><strong>Phân trang &amp; sắp xếp</strong> với <code>Pageable</code>, <code>Page</code>, <code>Slice</code>.</li>
+            <li>Quản lý schema đúng cách: vì sao <code>ddl-auto</code> chỉ để học, và cái gì thay thế nó.</li>
+          </ul>
+        </div>
+
+        <h2 id="bo-ba">1. JPA, Hibernate, Spring Data JPA — ba lớp chồng nhau</h2>
+
+        <div class="jvm-flow">
+          <div class="stages">
+            <div class="stage"><div class="stage-title">Code của bạn</div><div class="stage-content"><code>productRepository.findByCategory("sach")</code></div></div>
+            <div class="stage blue"><div class="stage-title">Spring Data JPA</div><div class="stage-content">Sinh cài đặt cho interface repository; phân trang, <code>@Query</code></div></div>
+            <div class="stage"><div class="stage-title">JPA (<code>jakarta.persistence</code>)</div><div class="stage-content"><strong>Đặc tả</strong>: <code>@Entity</code>, <code>EntityManager</code>, JPQL</div></div>
+            <div class="stage blue"><div class="stage-title">Hibernate</div><div class="stage-content"><strong>Cài đặt</strong> JPA phổ biến nhất: sinh SQL, cache, dirty checking</div></div>
+            <div class="stage"><div class="stage-title">JDBC + HikariCP</div><div class="stage-content">Driver &amp; connection pool</div></div>
+            <div class="stage blue"><div class="stage-title">PostgreSQL</div><div class="stage-content">CSDL thật</div></div>
+          </div>
+          <div class="caption">Mỗi lớp dựa trên lớp dưới. Khi gặp lỗi lạ, hãy xác định nó thuộc lớp nào.</div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th></th><th>JPA</th><th>Hibernate</th><th>Spring Data JPA</th></tr></thead>
+            <tbody>
+              <tr><td>Là gì</td><td>Đặc tả (interface, annotation)</td><td>Thư viện cài đặt JPA</td><td>Lớp trừu tượng của Spring bên trên JPA</td></tr>
+              <tr><td>Bạn chạm vào</td><td><code>@Entity</code>, <code>EntityManager</code></td><td>Cấu hình <code>hibernate.*</code>, <code>@Formula</code>…</td><td><code>JpaRepository</code>, <code>@Query</code>, <code>Pageable</code></td></tr>
+              <tr><td>Gói</td><td><code>jakarta.persistence.*</code></td><td><code>org.hibernate.*</code></td><td><code>org.springframework.data.jpa.*</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout callout-note">
+          <div class="callout-label">📌 ORM không phải đũa thần</div>
+          <p>ORM che bớt SQL nhưng <strong>không</strong> che được hậu quả của SQL: N+1 query, lazy loading, transaction. Dùng JPA tốt nghĩa là <em>vẫn phải hiểu SQL</em> (xem sub-pillar Database chương 2-8). Chương 7 đào sâu những bẫy này; chương này tập trung vào cách dùng đúng cơ bản.</p>
+        </div>
+
+        <h2 id="cai-dat">2. Cài đặt: PostgreSQL + Boot</h2>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>Chạy PostgreSQL bằng Docker</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-fn">docker</span> run <span class="tok-kw">--name</span> pg-shop <span class="tok-kw">-d</span> \
+  <span class="tok-fn">-e</span> POSTGRES_DB=shop <span class="tok-kw">-e</span> POSTGRES_USER=shop <span class="tok-kw">-e</span> POSTGRES_PASSWORD=secret \
+  <span class="tok-fn">-p</span> 5432:5432 postgres:16
+
+<span class="tok-fn">docker</span> exec <span class="tok-kw">-it</span> pg-shop psql <span class="tok-kw">-U</span> shop <span class="tok-kw">-d</span> shop <span class="tok-kw">-c</span> <span class="tok-str">"select version();"</span></code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>pom.xml</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-kw">&lt;dependency</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;groupId</span><span class="tok-kw">&gt;</span>org.springframework.boot<span class="tok-kw">&lt;/groupId</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;artifactId</span><span class="tok-kw">&gt;</span>spring-boot-starter-data-jpa<span class="tok-kw">&lt;/artifactId</span><span class="tok-kw">&gt;</span>   <span class="tok-com">&lt;!-- Hibernate + Spring Data JPA + HikariCP --&gt;</span>
+<span class="tok-kw">&lt;/dependency</span><span class="tok-kw">&gt;</span>
+<span class="tok-kw">&lt;dependency</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;groupId</span><span class="tok-kw">&gt;</span>org.postgresql<span class="tok-kw">&lt;/groupId</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;artifactId</span><span class="tok-kw">&gt;</span>postgresql<span class="tok-kw">&lt;/artifactId</span><span class="tok-kw">&gt;</span>                      <span class="tok-com">&lt;!-- JDBC driver; version do Boot quản lý --&gt;</span>
+    <span class="tok-kw">&lt;scope</span><span class="tok-kw">&gt;</span>runtime<span class="tok-kw">&lt;/scope</span><span class="tok-kw">&gt;</span>
+<span class="tok-kw">&lt;/dependency</span><span class="tok-kw">&gt;</span></code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>application.yml</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-cls">spring</span>:
+  <span class="tok-cls">datasource</span>:
+    <span class="tok-cls">url</span>: jdbc:postgresql://localhost:<span class="tok-num">5432</span>/shop
+    <span class="tok-cls">username</span>: shop
+    <span class="tok-cls">password</span>: ${DB_PASSWORD:secret}<span class="tok-com">             # chỉ để chạy local — xem chương 3 về bí mật</span>
+    <span class="tok-cls">hikari</span>:
+      <span class="tok-cls">maximum-pool-size</span>: <span class="tok-num">10</span><span class="tok-com">                     # số kết nối tối đa (mục dưới)</span>
+      <span class="tok-cls">connection-timeout</span>: <span class="tok-num">3000</span><span class="tok-com">                  # ms chờ lấy kết nối trước khi ném lỗi</span>
+  <span class="tok-cls">jpa</span>:
+    <span class="tok-cls">open-in-view</span>: <span class="tok-kw">false</span><span class="tok-com">                         # TẮT — giải thích ở chương 7</span>
+    <span class="tok-cls">hibernate</span>:
+      <span class="tok-cls">ddl-auto</span>: validate<span class="tok-com">                        # KHÔNG tự sửa schema (mục 7)</span>
+    <span class="tok-cls">properties</span>:
+      <span class="tok-cls">hibernate</span>:
+        <span class="tok-cls">format_sql</span>: <span class="tok-kw">true</span>
+<span class="tok-cls">logging</span>:
+  <span class="tok-cls">level</span>:
+    <span class="tok-cls">org.hibernate.SQL</span>: DEBUG<span class="tok-com">                    # in câu SQL ra log (dev)</span>
+    <span class="tok-cls">org.hibernate.orm.jdbc.bind</span>: TRACE<span class="tok-com">          # in tham số bind (dev) — Hibernate 6</span></code></pre>
+        </div>
+
+        <h3 id="hikari">2.1. HikariCP — connection pool</h3>
+
+        <p>Mở một kết nối CSDL đắt (TCP + xác thực, vài chục ms). Boot dùng <strong>HikariCP</strong> giữ sẵn một nhóm kết nối và cho mượn/trả. Hai ý quan trọng:</p>
+        <ul>
+          <li><strong>Pool nhỏ thường tốt hơn.</strong> <code>maximum-pool-size</code> mặc định 10 là hợp lý cho đa số ứng dụng; CSDL xử lý song song được ít hơn bạn nghĩ. Công thức gợi ý của HikariCP: <code>(số lõi CPU của DB × 2) + số ổ đĩa</code>.</li>
+          <li><strong>Pool cạn = ứng dụng treo.</strong> Nếu mọi kết nối đang bị giữ (transaction dài, gọi API ngoài <em>trong</em> transaction), request mới chờ <code>connection-timeout</code> rồi lỗi <em>"Connection is not available"</em>. Giữ transaction <strong>ngắn</strong>.</li>
+        </ul>
+
+        <h2 id="entity">3. Entity — ánh xạ bảng thành lớp</h2>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>Product.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Entity</span>
+<span class="tok-ann">@Table</span>(name = <span class="tok-str">"products"</span>)
+<span class="tok-ann">@EntityListeners</span>(<span class="tok-cls">AuditingEntityListener</span>.<span class="tok-kw">class</span>)
+<span class="tok-kw">public</span> <span class="tok-kw">class</span> <span class="tok-cls">Product</span> {
+
+    <span class="tok-ann">@Id</span>
+    <span class="tok-ann">@GeneratedValue</span>(strategy = <span class="tok-cls">GenerationType</span>.<span class="tok-cls">IDENTITY</span>)       <span class="tok-com">// PostgreSQL: cột BIGSERIAL/IDENTITY</span>
+    <span class="tok-kw">private</span> <span class="tok-cls">Long</span> id;
+
+    <span class="tok-ann">@Column</span>(nullable = <span class="tok-kw">false</span>, length = <span class="tok-num">200</span>)
+    <span class="tok-kw">private</span> <span class="tok-cls">String</span> name;
+
+    <span class="tok-ann">@Column</span>(nullable = <span class="tok-kw">false</span>, precision = <span class="tok-num">12</span>, scale = <span class="tok-num">2</span>)       <span class="tok-com">// NUMERIC(12,2)</span>
+    <span class="tok-kw">private</span> <span class="tok-cls">BigDecimal</span> price;                                  <span class="tok-com">// tiền: BigDecimal, không dùng double</span>
+
+    <span class="tok-ann">@Column</span>(nullable = <span class="tok-kw">false</span>, length = <span class="tok-num">50</span>)
+    <span class="tok-kw">private</span> <span class="tok-cls">String</span> category;
+
+    <span class="tok-ann">@Enumerated</span>(<span class="tok-cls">EnumType</span>.<span class="tok-cls">STRING</span>)                               <span class="tok-com">// lưu "ACTIVE", không lưu số thứ tự</span>
+    <span class="tok-ann">@Column</span>(nullable = <span class="tok-kw">false</span>, length = <span class="tok-num">20</span>)
+    <span class="tok-kw">private</span> <span class="tok-cls">ProductStatus</span> status = <span class="tok-cls">ProductStatus</span>.<span class="tok-cls">ACTIVE</span>;
+
+    <span class="tok-ann">@CreatedDate</span>
+    <span class="tok-ann">@Column</span>(nullable = <span class="tok-kw">false</span>, updatable = <span class="tok-kw">false</span>)
+    <span class="tok-kw">private</span> <span class="tok-cls">Instant</span> createdAt;
+
+    <span class="tok-ann">@LastModifiedDate</span>
+    <span class="tok-kw">private</span> <span class="tok-cls">Instant</span> updatedAt;
+
+    <span class="tok-kw">protected</span> <span class="tok-cls">Product</span>() { }                                    <span class="tok-com">// JPA bắt buộc có constructor không tham số</span>
+
+    <span class="tok-kw">public</span> <span class="tok-cls">Product</span>(<span class="tok-cls">String</span> name, <span class="tok-cls">BigDecimal</span> price, <span class="tok-cls">String</span> category) {
+        <span class="tok-kw">this</span>.name = name;
+        <span class="tok-kw">this</span>.price = price;
+        <span class="tok-kw">this</span>.category = category;
+    }
+
+    <span class="tok-com">// Hành vi nghiệp vụ thay vì setter tràn lan</span>
+    <span class="tok-kw">public</span> <span class="tok-kw">void</span> <span class="tok-fn">changePrice</span>(<span class="tok-cls">BigDecimal</span> newPrice) {
+        <span class="tok-kw">if</span> (newPrice.<span class="tok-fn">signum</span>() &lt;= <span class="tok-num">0</span>) <span class="tok-kw">throw</span> <span class="tok-kw">new</span> <span class="tok-cls">IllegalArgumentException</span>(<span class="tok-str">"Giá phải &gt; 0"</span>);
+        <span class="tok-kw">this</span>.price = newPrice;
+    }
+    <span class="tok-kw">public</span> <span class="tok-kw">void</span> <span class="tok-fn">discontinue</span>() { <span class="tok-kw">this</span>.status = <span class="tok-cls">ProductStatus</span>.<span class="tok-cls">DISCONTINUED</span>; }
+
+    <span class="tok-kw">public</span> <span class="tok-cls">Long</span> <span class="tok-fn">getId</span>() { <span class="tok-kw">return</span> id; }
+    <span class="tok-kw">public</span> <span class="tok-cls">String</span> <span class="tok-fn">getName</span>() { <span class="tok-kw">return</span> name; }
+    <span class="tok-kw">public</span> <span class="tok-cls">BigDecimal</span> <span class="tok-fn">getPrice</span>() { <span class="tok-kw">return</span> price; }
+    <span class="tok-kw">public</span> <span class="tok-cls">String</span> <span class="tok-fn">getCategory</span>() { <span class="tok-kw">return</span> category; }
+    <span class="tok-kw">public</span> <span class="tok-cls">ProductStatus</span> <span class="tok-fn">getStatus</span>() { <span class="tok-kw">return</span> status; }
+    <span class="tok-kw">public</span> <span class="tok-cls">Instant</span> <span class="tok-fn">getCreatedAt</span>() { <span class="tok-kw">return</span> createdAt; }
+}
+
+<span class="tok-kw">public</span> <span class="tok-kw">enum</span> <span class="tok-cls">ProductStatus</span> { <span class="tok-cls">ACTIVE</span>, <span class="tok-cls">DISCONTINUED</span> }
+
+<span class="tok-ann">@Configuration</span>
+<span class="tok-ann">@EnableJpaAuditing</span>                                             <span class="tok-com">// bật @CreatedDate/@LastModifiedDate</span>
+<span class="tok-kw">class</span> <span class="tok-cls">JpaConfig</span> { }</code></pre>
+        </div>
+
+        <h3 id="luat-entity">3.1. Luật cho entity</h3>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Quy tắc</th><th>Vì sao</th></tr></thead>
+            <tbody>
+              <tr><td>Có <strong>constructor không tham số</strong> (<code>protected</code> là đủ)</td><td>Hibernate tạo object bằng reflection khi đọc từ DB</td></tr>
+              <tr><td>Lớp **không <code>final</code><strong>, field </strong>không <code>final</code>**</td><td>Hibernate tạo <em>proxy</em> (lazy loading) bằng cách kế thừa</td></tr>
+              <tr><td>**Không dùng <code>record</code> làm entity**</td><td>Record bất biến &amp; <code>final</code> — mâu thuẫn với cách Hibernate vận hành. Dùng record cho <strong>DTO</strong></td></tr>
+              <tr><td><code>@Enumerated(EnumType.STRING)</code> luôn luôn</td><td><code>ORDINAL</code> (mặc định) lưu 0,1,2 — chèn một giá trị vào giữa enum là hỏng dữ liệu cũ</td></tr>
+              <tr><td>Tiền = <code>BigDecimal</code> + <code>NUMERIC(p,s)</code></td><td><code>double</code> có sai số làm tròn</td></tr>
+              <tr><td>Thời điểm = <code>Instant</code>/<code>OffsetDateTime</code></td><td>Tránh lệch múi giờ; lưu UTC, hiển thị theo múi giờ người dùng</td></tr>
+              <tr><td>Đừng dùng entity làm response/request</td><td>Lộ cấu trúc DB, lazy-loading nổ lúc serialize, mass assignment (chương 4, 8)</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 id="id-strategy">3.2. Chọn chiến lược sinh khoá</h3>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th><code>GenerationType</code></th><th>Cách hoạt động</th><th>Ghi chú</th></tr></thead>
+            <tbody>
+              <tr><td><code>IDENTITY</code></td><td>CSDL tự tăng (<code>BIGSERIAL</code>)</td><td>Đơn giản, hợp PostgreSQL/MySQL; <strong>không</strong> gộp được batch insert (Hibernate phải <code>INSERT</code> ngay để lấy id)</td></tr>
+              <tr><td><code>SEQUENCE</code></td><td>Lấy giá trị từ sequence, có thể lấy trước theo lô (<code>allocationSize</code>)</td><td>Tối ưu <strong>batch insert</strong>; chuẩn của Hibernate cho PostgreSQL</td></tr>
+              <tr><td><code>UUID</code></td><td>Sinh UUID ở ứng dụng</td><td>Không đoán được, phân tán tốt; index to hơn, nên dùng UUIDv7 để có thứ tự thời gian</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout callout-tip">
+          <div class="callout-label">💡 Lời khuyên thực dụng</div>
+          <p>Dự án mới: <code>IDENTITY</code> cho đơn giản; khi cần nhập liệu hàng loạt (hàng chục nghìn dòng) chuyển <code>SEQUENCE</code>. Khoá lộ ra URL cho người ngoài: cân nhắc UUID để tránh bị đoán <code>id=1,2,3…</code> (<em>IDOR</em> — chương 9).</p>
+        </div>
+
+        <h2 id="repository">4. Repository — chỉ cần khai báo interface</h2>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>ProductRepository.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-kw">public</span> <span class="tok-kw">interface</span> <span class="tok-cls">ProductRepository</span> <span class="tok-kw">extends</span> <span class="tok-cls">JpaRepository</span>&lt;<span class="tok-cls">Product</span>, <span class="tok-cls">Long</span>&gt; {
+    <span class="tok-com">// Rỗng! Đã có sẵn: save, saveAll, findById, findAll, existsById, count, deleteById, flush...</span>
+}</code></pre>
+        </div>
+        <p>Spring Data tạo bean cài đặt interface này lúc khởi động (bằng proxy). Bạn tiêm và dùng như mọi bean:</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Dùng</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Service</span>
+<span class="tok-kw">class</span> <span class="tok-cls">ProductService</span> {
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">ProductRepository</span> repo;
+    <span class="tok-cls">ProductService</span>(<span class="tok-cls">ProductRepository</span> repo) { <span class="tok-kw">this</span>.repo = repo; }
+
+    <span class="tok-cls">Product</span> <span class="tok-fn">create</span>(<span class="tok-cls">String</span> name, <span class="tok-cls">BigDecimal</span> price, <span class="tok-cls">String</span> category) {
+        <span class="tok-kw">return</span> repo.<span class="tok-fn">save</span>(<span class="tok-kw">new</span> <span class="tok-cls">Product</span>(name, price, category));       <span class="tok-com">// INSERT; trả về entity đã có id</span>
+    }
+
+    <span class="tok-cls">Product</span> <span class="tok-fn">get</span>(<span class="tok-kw">long</span> id) {
+        <span class="tok-kw">return</span> repo.<span class="tok-fn">findById</span>(id).<span class="tok-fn">orElseThrow</span>(() -&gt; <span class="tok-kw">new</span> <span class="tok-cls">NotFoundException</span>(<span class="tok-str">"product"</span>, id));   <span class="tok-com">// SELECT … WHERE id=?</span>
+    }
+}</code></pre>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Method có sẵn</th><th>SQL tương đương</th><th>Ghi chú</th></tr></thead>
+            <tbody>
+              <tr><td><code>save(e)</code></td><td><code>INSERT</code> (id null) hoặc <code>UPDATE</code> (id có)</td><td>Dùng cho cả tạo &amp; cập nhật</td></tr>
+              <tr><td><code>findById(id)</code></td><td><code>SELECT … WHERE id = ?</code></td><td>Trả <code>Optional</code></td></tr>
+              <tr><td><code>findAll()</code></td><td><code>SELECT * FROM …</code></td><td>⚠️ Không dùng cho bảng lớn — dùng phân trang</td></tr>
+              <tr><td><code>existsById(id)</code>, <code>count()</code></td><td><code>SELECT 1…</code> / <code>SELECT count(*)</code></td><td></td></tr>
+              <tr><td><code>deleteById(id)</code></td><td><code>DELETE … WHERE id = ?</code></td><td>Phát <code>SELECT</code> trước nếu entity chưa tải</td></tr>
+              <tr><td><code>saveAll</code>, <code>deleteAllInBatch</code></td><td>Nhiều câu / một câu</td><td>Batch cần cấu hình thêm</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 id="derived">4.1. Derived query — tên method <em>là</em> câu truy vấn</h3>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>ProductRepository.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-kw">public</span> <span class="tok-kw">interface</span> <span class="tok-cls">ProductRepository</span> <span class="tok-kw">extends</span> <span class="tok-cls">JpaRepository</span>&lt;<span class="tok-cls">Product</span>, <span class="tok-cls">Long</span>&gt; {
+
+    <span class="tok-cls">List</span>&lt;<span class="tok-cls">Product</span>&gt; <span class="tok-fn">findByCategory</span>(<span class="tok-cls">String</span> category);
+    <span class="tok-com">// → SELECT … WHERE category = ?</span>
+
+    <span class="tok-cls">List</span>&lt;<span class="tok-cls">Product</span>&gt; <span class="tok-fn">findByCategoryAndStatus</span>(<span class="tok-cls">String</span> category, <span class="tok-cls">ProductStatus</span> status);
+    <span class="tok-com">// → … WHERE category = ? AND status = ?</span>
+
+    <span class="tok-cls">List</span>&lt;<span class="tok-cls">Product</span>&gt; <span class="tok-fn">findByPriceBetween</span>(<span class="tok-cls">BigDecimal</span> min, <span class="tok-cls">BigDecimal</span> max);
+    <span class="tok-cls">List</span>&lt;<span class="tok-cls">Product</span>&gt; <span class="tok-fn">findByNameContainingIgnoreCase</span>(<span class="tok-cls">String</span> keyword);     <span class="tok-com">// LIKE %kw% không phân biệt hoa thường</span>
+    <span class="tok-cls">List</span>&lt;<span class="tok-cls">Product</span>&gt; <span class="tok-fn">findByCategoryInOrderByPriceAsc</span>(<span class="tok-cls">Collection</span>&lt;<span class="tok-cls">String</span>&gt; categories);
+    <span class="tok-cls">Optional</span>&lt;<span class="tok-cls">Product</span>&gt; <span class="tok-fn">findFirstByCategoryOrderByCreatedAtDesc</span>(<span class="tok-cls">String</span> category);
+    <span class="tok-cls">List</span>&lt;<span class="tok-cls">Product</span>&gt; <span class="tok-fn">findTop5ByStatusOrderByPriceDesc</span>(<span class="tok-cls">ProductStatus</span> status);
+
+    <span class="tok-kw">boolean</span> <span class="tok-fn">existsByNameIgnoreCase</span>(<span class="tok-cls">String</span> name);
+    <span class="tok-kw">long</span> <span class="tok-fn">countByCategory</span>(<span class="tok-cls">String</span> category);
+    <span class="tok-kw">long</span> <span class="tok-fn">deleteByStatus</span>(<span class="tok-cls">ProductStatus</span> status);
+}</code></pre>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Từ khoá</th><th>Ví dụ</th><th>SQL</th></tr></thead>
+            <tbody>
+              <tr><td><code>And</code> / <code>Or</code></td><td><code>findByNameAndCategory</code></td><td><code>… AND …</code></td></tr>
+              <tr><td><code>Is</code>, <code>Equals</code> (mặc định)</td><td><code>findByCategory</code></td><td><code>= ?</code></td></tr>
+              <tr><td><code>Between</code></td><td><code>findByPriceBetween</code></td><td><code>BETWEEN ? AND ?</code></td></tr>
+              <tr><td><code>LessThan</code> / <code>GreaterThanEqual</code>…</td><td><code>findByPriceLessThan</code></td><td><code>&lt; ?</code></td></tr>
+              <tr><td><code>Like</code> / <code>Containing</code> / <code>StartingWith</code></td><td><code>findByNameContaining</code></td><td><code>LIKE %?%</code></td></tr>
+              <tr><td><code>In</code></td><td><code>findByCategoryIn(list)</code></td><td><code>IN (…)</code></td></tr>
+              <tr><td><code>IsNull</code> / <code>IsNotNull</code></td><td><code>findByDeletedAtIsNull</code></td><td><code>IS NULL</code></td></tr>
+              <tr><td><code>OrderBy…Asc/Desc</code></td><td><code>findByCategoryOrderByPriceDesc</code></td><td><code>ORDER BY</code></td></tr>
+              <tr><td><code>First</code> / <code>Top</code> <em>n</em></td><td><code>findTop5By…</code></td><td><code>LIMIT 5</code></td></tr>
+              <tr><td><code>IgnoreCase</code></td><td><code>findByNameIgnoreCase</code></td><td><code>upper(name) = upper(?)</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout callout-gotcha">
+          <div class="callout-label">⚠️ Tên method dài là mùi code</div>
+          <p><code>findByCategoryAndStatusAndPriceBetweenAndNameContainingIgnoreCaseOrderByCreatedAtDesc</code> đọc không nổi. Quá <strong>3 điều kiện</strong> ⇒ chuyển sang <code>@Query</code> (mục 5) hoặc <code>Specification</code>/Querydsl (lọc động). Còn nếu gõ sai tên thuộc tính, ứng dụng <strong>không khởi động</strong> (<code>No property 'categry' found</code>) — fail fast, rất tốt.</p>
+        </div>
+
+        <h2 id="query">5. <code>@Query</code> — khi cần toàn quyền</h2>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>ProductRepository.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-com">// JPQL — truy vấn trên ENTITY &amp; thuộc tính, không phải bảng &amp; cột</span>
+<span class="tok-ann">@Query</span>(<span class="tok-str">"select p from Product p where p.category = :category and p.price &lt;= :max order by p.price"</span>)
+<span class="tok-cls">List</span>&lt;<span class="tok-cls">Product</span>&gt; <span class="tok-fn">cheapInCategory</span>(<span class="tok-ann">@Param</span>(<span class="tok-str">"category"</span>) <span class="tok-cls">String</span> category, <span class="tok-ann">@Param</span>(<span class="tok-str">"max"</span>) <span class="tok-cls">BigDecimal</span> max);
+
+<span class="tok-com">// Thống kê: trả về nhiều cột → dùng projection (mục 5.1)</span>
+<span class="tok-ann">@Query</span>(<span class="tok-str">"select p.category as category, count(p) as total, avg(p.price) as avgPrice "</span> +
+       <span class="tok-str">"from Product p where p.status = 'ACTIVE' group by p.category"</span>)
+<span class="tok-cls">List</span>&lt;<span class="tok-cls">CategoryStats</span>&gt; <span class="tok-fn">statsByCategory</span>();
+
+<span class="tok-com">// Câu UPDATE/DELETE hàng loạt: phải có @Modifying</span>
+<span class="tok-ann">@Modifying</span>(clearAutomatically = <span class="tok-kw">true</span>)                    <span class="tok-com">// xoá persistence context sau khi chạy (chương 7)</span>
+<span class="tok-ann">@Query</span>(<span class="tok-str">"update Product p set p.status = 'DISCONTINUED' where p.category = :category"</span>)
+<span class="tok-kw">int</span> <span class="tok-fn">discontinueCategory</span>(<span class="tok-ann">@Param</span>(<span class="tok-str">"category"</span>) <span class="tok-cls">String</span> category);
+
+<span class="tok-com">// SQL thuần khi JPQL không đủ (hàm đặc thù PostgreSQL, full-text…)</span>
+<span class="tok-ann">@Query</span>(value = <span class="tok-str">"select * from products where to_tsvector('simple', name) @@ plainto_tsquery('simple', :q)"</span>,
+       nativeQuery = <span class="tok-kw">true</span>)
+<span class="tok-cls">List</span>&lt;<span class="tok-cls">Product</span>&gt; <span class="tok-fn">fullTextSearch</span>(<span class="tok-ann">@Param</span>(<span class="tok-str">"q"</span>) <span class="tok-cls">String</span> q);</code></pre>
+        </div>
+        <div class="java-rule">**Luôn dùng tham số có tên (<code>:max</code> + <code>@Param</code>), không bao giờ nối chuỗi vào câu query.<strong> Tham số được driver <em>bind</em> nên miễn nhiễm </strong>SQL injection**. Nối chuỗi <code>"... where name = '" + name + "'"</code> là mở cửa cho nó (xem Java chương 13).</div>
+
+        <h3 id="projection">5.1. Projection — chỉ lấy cột cần</h3>
+
+        <p>Tải cả entity (mọi cột, kèm quan hệ) chỉ để hiện hai trường là phí. <strong>Projection</strong> trả về một "mặt cắt":</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Projection</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-com">// (a) Interface projection — getter khớp tên cột/alias</span>
+<span class="tok-kw">public</span> <span class="tok-kw">interface</span> <span class="tok-cls">CategoryStats</span> {
+    <span class="tok-cls">String</span> <span class="tok-fn">getCategory</span>();
+    <span class="tok-kw">long</span> <span class="tok-fn">getTotal</span>();
+    <span class="tok-cls">BigDecimal</span> <span class="tok-fn">getAvgPrice</span>();
+}
+
+<span class="tok-com">// (b) DTO record — dùng với "select new" (an toàn kiểu, gọn)</span>
+<span class="tok-kw">public</span> <span class="tok-kw">record</span> <span class="tok-cls">ProductSummary</span>(<span class="tok-cls">Long</span> id, <span class="tok-cls">String</span> name, <span class="tok-cls">BigDecimal</span> price) { }
+
+<span class="tok-ann">@Query</span>(<span class="tok-str">"select new vn.itbasic.shop.ProductSummary(p.id, p.name, p.price) from Product p where p.category = :c"</span>)
+<span class="tok-cls">List</span>&lt;<span class="tok-cls">ProductSummary</span>&gt; <span class="tok-fn">summaries</span>(<span class="tok-ann">@Param</span>(<span class="tok-str">"c"</span>) <span class="tok-cls">String</span> category);
+
+<span class="tok-com">// (c) Derived query cũng nhận projection</span>
+<span class="tok-cls">List</span>&lt;<span class="tok-cls">ProductSummary</span>&gt; <span class="tok-fn">findByStatus</span>(<span class="tok-cls">ProductStatus</span> status);       <span class="tok-com">// chỉ SELECT các cột cần</span></code></pre>
+        </div>
+
+        <h2 id="phan-trang">6. Phân trang &amp; sắp xếp</h2>
+
+        <p>Không bao giờ trả về <em>toàn bộ</em> bảng. <code>Pageable</code> mô tả "trang số mấy, mỗi trang bao nhiêu, sắp xếp thế nào":</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Repository &amp; service</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-cls">Page</span>&lt;<span class="tok-cls">Product</span>&gt; <span class="tok-fn">findByCategory</span>(<span class="tok-cls">String</span> category, <span class="tok-cls">Pageable</span> pageable);     <span class="tok-com">// thêm tham số Pageable</span>
+
+<span class="tok-com">// Gọi:</span>
+<span class="tok-cls">Pageable</span> pageable = <span class="tok-cls">PageRequest</span>.<span class="tok-fn">of</span>(<span class="tok-num">0</span>, <span class="tok-num">20</span>, <span class="tok-cls">Sort</span>.<span class="tok-fn">by</span>(<span class="tok-str">"price"</span>).<span class="tok-fn">descending</span>().<span class="tok-fn">and</span>(<span class="tok-cls">Sort</span>.<span class="tok-fn">by</span>(<span class="tok-str">"name"</span>)));
+<span class="tok-cls">Page</span>&lt;<span class="tok-cls">Product</span>&gt; page = repo.<span class="tok-fn">findByCategory</span>(<span class="tok-str">"sach"</span>, pageable);
+
+page.<span class="tok-fn">getContent</span>();         <span class="tok-com">// List&lt;Product&gt; của trang này</span>
+page.<span class="tok-fn">getTotalElements</span>();   <span class="tok-com">// tổng số bản ghi — tốn thêm 1 câu COUNT(*)</span>
+page.<span class="tok-fn">getTotalPages</span>();
+page.<span class="tok-fn">getNumber</span>();          <span class="tok-com">// trang hiện tại (đếm từ 0)</span>
+page.<span class="tok-fn">hasNext</span>();</code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Controller — Spring tự đọc ?page=&amp;size=&amp;sort=</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@GetMapping</span>(<span class="tok-str">"/api/products"</span>)
+<span class="tok-cls">PagedResponse</span>&lt;<span class="tok-cls">ProductSummary</span>&gt; <span class="tok-fn">list</span>(
+        <span class="tok-ann">@RequestParam</span> <span class="tok-cls">String</span> category,
+        <span class="tok-ann">@PageableDefault</span>(size = <span class="tok-num">20</span>, sort = <span class="tok-str">"createdAt"</span>, direction = <span class="tok-cls">Sort</span>.<span class="tok-cls">Direction</span>.<span class="tok-cls">DESC</span>) <span class="tok-cls">Pageable</span> pageable) {
+
+    <span class="tok-cls">Page</span>&lt;<span class="tok-cls">ProductSummary</span>&gt; page = service.<span class="tok-fn">search</span>(category, pageable);
+    <span class="tok-kw">return</span> <span class="tok-cls">PagedResponse</span>.<span class="tok-fn">from</span>(page);                          <span class="tok-com">// trả DTO riêng, không trả thẳng PageImpl</span>
+}
+
+<span class="tok-kw">public</span> <span class="tok-kw">record</span> <span class="tok-cls">PagedResponse</span>&lt;<span class="tok-cls">T</span>&gt;(<span class="tok-cls">List</span>&lt;<span class="tok-cls">T</span>&gt; items, <span class="tok-kw">int</span> page, <span class="tok-kw">int</span> size, <span class="tok-kw">long</span> totalItems, <span class="tok-kw">int</span> totalPages) {
+    <span class="tok-kw">static</span> &lt;<span class="tok-cls">T</span>&gt; <span class="tok-cls">PagedResponse</span>&lt;<span class="tok-cls">T</span>&gt; <span class="tok-fn">from</span>(<span class="tok-cls">Page</span>&lt;<span class="tok-cls">T</span>&gt; p) {
+        <span class="tok-kw">return</span> <span class="tok-kw">new</span> <span class="tok-cls">PagedResponse</span>&lt;&gt;(p.<span class="tok-fn">getContent</span>(), p.<span class="tok-fn">getNumber</span>(), p.<span class="tok-fn">getSize</span>(), p.<span class="tok-fn">getTotalElements</span>(), p.<span class="tok-fn">getTotalPages</span>());
+    }
+}
+<span class="tok-com">// GET /api/products?category=sach&amp;page=1&amp;size=10&amp;sort=price,desc</span></code></pre>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Kiểu</th><th>Có <code>COUNT(*)</code>?</th><th>Biết tổng số?</th><th>Dùng khi</th></tr></thead>
+            <tbody>
+              <tr><td><code>Page&lt;T&gt;</code></td><td>✅ (1 câu thêm)</td><td>✅</td><td>Giao diện có số trang (1,2,3…)</td></tr>
+              <tr><td><code>Slice&lt;T&gt;</code></td><td>❌ (lấy <code>size+1</code> bản ghi)</td><td>❌, chỉ biết <code>hasNext()</code></td><td>"Tải thêm" / cuộn vô hạn — rẻ hơn</td></tr>
+              <tr><td><code>List&lt;T&gt;</code> + <code>Pageable</code></td><td>❌</td><td>❌</td><td>Chỉ cần dữ liệu, không cần metadata</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout callout-warning">
+          <div class="callout-label">⚠️ Offset lớn thì chậm</div>
+          <p><code>OFFSET 1000000 LIMIT 20</code> buộc CSDL đọc rồi bỏ 1.000.000 dòng. Với dữ liệu rất lớn dùng <strong>keyset pagination</strong> (<em>seek method</em>): <code>where id &lt; :lastId order by id desc limit 20</code> — Spring Data hỗ trợ qua <code>ScrollPosition</code> (3.1+). Trả về <code>PageImpl</code> thẳng ra JSON cũng bị Spring Data cảnh báo vì cấu trúc không ổn định — dùng DTO như trên hoặc <code>PagedModel</code>.</p>
+        </div>
+        <div class="callout callout-tip">
+          <div class="callout-label">💡 Chặn <code>size</code> lớn</div>
+          <p>Client gửi <code>?size=1000000</code> là đủ làm sập server. Spring giới hạn <code>size</code> tối đa 2000 mặc định (<code>spring.data.web.pageable.max-page-size</code>); hãy đặt thấp hơn, ví dụ 100.</p>
+        </div>
+
+        <h2 id="schema">7. Quản lý schema — đừng để Hibernate sửa DB production</h2>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th><code>ddl-auto</code></th><th>Làm gì</th><th>Dùng ở đâu</th></tr></thead>
+            <tbody>
+              <tr><td><code>none</code></td><td>Không làm gì</td><td>Production (schema do migration quản lý)</td></tr>
+              <tr><td><code>validate</code></td><td>Kiểm tra entity khớp schema; <strong>sai thì không khởi động</strong></td><td>Staging/production — lưới an toàn</td></tr>
+              <tr><td><code>update</code></td><td>Tự <code>ALTER</code>: thêm cột/bảng, <strong>không</strong> xoá/đổi</td><td>⚠️ Chỉ demo — không dự đoán được, không rollback được</td></tr>
+              <tr><td><code>create</code> / <code>create-drop</code></td><td>Xoá rồi tạo lại <strong>toàn bộ</strong></td><td>Test với DB trong bộ nhớ. 💥 Không bao giờ ở prod</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="java-rule">**Schema là tài sản có phiên bản — quản lý bằng migration (Flyway/Liquibase), không bằng <code>ddl-auto</code>.** Mỗi thay đổi là một file SQL đánh số, chạy theo thứ tự, lưu lịch sử trong bảng <code>flyway_schema_history</code>. Chương 7 dựng Flyway từ đầu. Trước đó, để học, <code>ddl-auto: create</code> với H2/Postgres local là chấp nhận được.</div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>SQL tương ứng entity Product (sẽ nằm trong migration ở chương 7)</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-kw">create</span> <span class="tok-kw">table</span> products (
+    id          <span class="tok-kw">bigint</span> generated <span class="tok-kw">by</span> <span class="tok-kw">default</span> <span class="tok-kw">as</span> identity <span class="tok-kw">primary</span> <span class="tok-kw">key</span>,
+    name        <span class="tok-kw">varchar</span>(<span class="tok-num">200</span>)   <span class="tok-kw">not</span> <span class="tok-kw">null</span>,
+    price       numeric(<span class="tok-num">12</span>, <span class="tok-num">2</span>) <span class="tok-kw">not</span> <span class="tok-kw">null</span>,
+    category    <span class="tok-kw">varchar</span>(<span class="tok-num">50</span>)    <span class="tok-kw">not</span> <span class="tok-kw">null</span>,
+    status      <span class="tok-kw">varchar</span>(<span class="tok-num">20</span>)    <span class="tok-kw">not</span> <span class="tok-kw">null</span>,
+    created_at  <span class="tok-kw">timestamp</span>(<span class="tok-num">6</span>) with time zone <span class="tok-kw">not</span> <span class="tok-kw">null</span>,
+    updated_at  <span class="tok-kw">timestamp</span>(<span class="tok-num">6</span>) with time zone
+);
+<span class="tok-kw">create</span> <span class="tok-kw">index</span> idx_products_category <span class="tok-kw">on</span> products (category);</code></pre>
+        </div>
+        <p>Hibernate đặt tên cột theo quy ước <code>snake_case</code> (<code>createdAt</code> → <code>created_at</code>) nhờ Spring Boot cấu hình sẵn <code>CamelCaseToUnderscoresNamingStrategy</code>.</p>
+
+        <h2 id="cheat-sheet">8. Cheat sheet chương 6</h2>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Cần gì</th><th>Dùng</th></tr></thead>
+            <tbody>
+              <tr><td>CRUD đơn giản</td><td><code>extends JpaRepository&lt;Entity, IdType&gt;</code></td></tr>
+              <tr><td>Truy vấn 1-2 điều kiện</td><td>Derived query <code>findBy…</code></td></tr>
+              <tr><td>Truy vấn phức tạp / thống kê</td><td><code>@Query</code> JPQL + <code>@Param</code></td></tr>
+              <tr><td>Chỉ cần vài cột</td><td>Projection (interface hoặc <code>record</code> + <code>select new</code>)</td></tr>
+              <tr><td>Danh sách lớn</td><td><code>Pageable</code> → <code>Page</code>/<code>Slice</code>; chặn <code>max-page-size</code></td></tr>
+              <tr><td>UPDATE/DELETE hàng loạt</td><td><code>@Modifying @Query</code></td></tr>
+              <tr><td>Enum</td><td><code>@Enumerated(EnumType.STRING)</code></td></tr>
+              <tr><td>Schema</td><td><code>validate</code> + Flyway; <strong>không</strong> <code>update</code>/<code>create</code> ở prod</td></tr>
+              <tr><td>Xem SQL thật sự chạy</td><td><code>logging.level.org.hibernate.SQL=DEBUG</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="bai-tap">Bài tập</h2>
+
+        <div class="exercises">
+
+          <div class="exercise">
+            <h4>Dựng tầng dữ liệu cho Book</h4>
+            <div class="exercise-body">
+              <p>Chạy PostgreSQL (Docker). Tạo entity <code>Book(id, title, author, isbn UNIQUE, price, publishedYear, status)</code>; <code>BookRepository</code>; endpoint <code>POST/GET /api/books</code> thay thế <code>ConcurrentHashMap</code> ở chương 4.</p>
+              <ul>
+                <li><code>ddl-auto: create</code> để học; bật log SQL.</li>
+                <li>Tạo 3 sách, đọc log: bạn thấy câu <code>INSERT</code> nào?</li>
+                <li>Khởi động lại — dữ liệu còn không? Đổi sang <code>validate</code> thì sao?</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p><code>create</code> xoá &amp; tạo lại bảng mỗi lần khởi động nên dữ liệu mất; <code>validate</code> giữ dữ liệu nhưng bảng phải tồn tại và khớp entity — chính vì vậy cần migration (chương 7).</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Derived query vs <code>@Query</code></h4>
+            <div class="exercise-body">
+              <p>Viết ba truy vấn cho <code>Book</code>:</p>
+              <ul>
+                <li><code>findByAuthorIgnoreCase</code>; <code>findByPublishedYearBetween</code>; <code>existsByIsbn</code>.</li>
+                <li><code>@Query</code> trả 5 tác giả có nhiều sách nhất (<code>select b.author, count(b) …</code>) dùng <strong>projection interface</strong>.</li>
+                <li>Chuyển một derived query dài thành <code>@Query</code> và nêu lý do.</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Group by + <code>order by count(b) desc</code> rồi lấy 5 dòng đầu bằng <code>Pageable.ofSize(5)</code> hoặc <code>limit</code> (Hibernate 6 hỗ trợ <code>limit</code> trong JPQL). Projection cần alias khớp tên getter: <code>as author</code>, <code>as total</code>.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Phân trang đúng cách</h4>
+            <div class="exercise-body">
+              <p>Tạo 1.000 sách bằng <code>ApplicationRunner</code>. Viết <code>GET /api/books?page=&amp;size=&amp;sort=</code> trả <code>PagedResponse&lt;BookSummary&gt;</code>.</p>
+              <ul>
+                <li>Thử <code>size=100000</code> — chuyện gì xảy ra? Chặn bằng <code>max-page-size</code>.</li>
+                <li>Thử <code>sort=khongTonTai,asc</code> — lỗi gì? (<code>PropertyReferenceException</code>).</li>
+                <li>So sánh số câu SQL của <code>Page</code> và <code>Slice</code> trong log.</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p><code>Page</code> phát 2 câu (select + count), <code>Slice</code> chỉ 1 câu (lấy size+1). Lỗi sort không hợp lệ nên được <code>@ExceptionHandler</code> biến thành 400 (chương 5) — đó là <em>dữ liệu client gửi sai</em>, không phải 500.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Săn lỗi entity</h4>
+            <div class="exercise-body">
+              <p>Chỉ ra ít nhất <strong>5 vấn đề</strong> và sửa:</p>
+              <div class="code-wrap">
+                <div class="code-meta"><span>Order.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Entity</span>
+<span class="tok-kw">public</span> <span class="tok-kw">record</span> <span class="tok-cls">Order</span>(
+        <span class="tok-ann">@Id</span> <span class="tok-cls">Long</span> id,
+        <span class="tok-kw">double</span> total,
+        <span class="tok-ann">@Enumerated</span> <span class="tok-cls">String</span> status,
+        <span class="tok-cls">LocalDateTime</span> createdAt) { }</code></pre>
+              </div>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>(1) <code>record</code> không làm entity được (final, không constructor rỗng, bất biến); (2) <code>double</code> cho tiền → <code>BigDecimal</code>; (3) <code>@Enumerated</code> mặc định ORDINAL và kiểu <code>String</code> vô nghĩa — dùng enum + <code>EnumType.STRING</code>; (4) <code>LocalDateTime</code> mơ hồ múi giờ → <code>Instant</code>; (5) <code>@Id</code> thiếu <code>@GeneratedValue</code>; (6) thiếu <code>@Table</code>/<code>@Column(nullable=false)</code>.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Đo pool kết nối</h4>
+            <div class="exercise-body">
+              <p>Đặt <code>maximum-pool-size: 2</code>, <code>connection-timeout: 1000</code>. Viết endpoint <code>GET /slow</code> có <code>@Transactional</code> rồi <code>Thread.sleep(5000)</code> bên trong.</p>
+              <ul>
+                <li>Gọi <code>/slow</code> 3 lần song song bằng <code>curl &amp;</code>: request thứ 3 nhận lỗi gì, sau bao lâu?</li>
+                <li>Xem <code>/actuator/metrics/hikaricp.connections.active</code> và <code>hikaricp.connections.pending</code>.</li>
+                <li>Nêu 2 cách tránh trên thực tế.</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Lỗi <code>Connection is not available, request timed out after 1000ms</code>. Cách tránh: không giữ transaction/kết nối trong lúc chờ I/O chậm (gọi API ngoài, <code>sleep</code>), hoặc tách phần I/O ra ngoài transaction; không phải cứ tăng pool là xong.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+        </div>
+
+        <h2 id="quiz">Quiz</h2>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q1</span>
+            <div class="quiz-q-text"><p>JPA, Hibernate và Spring Data JPA khác nhau thế nào?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p><strong>JPA</strong> là đặc tả (<code>jakarta.persistence</code>); <strong>Hibernate</strong> là cài đặt phổ biến nhất của JPA (sinh SQL, cache, dirty checking); <strong>Spring Data JPA</strong> là lớp của Spring bên trên — tự sinh cài đặt repository từ interface, thêm phân trang và <code>@Query</code>.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q2</span>
+            <div class="quiz-q-text"><p>Vì sao nên dùng <code>@Enumerated(EnumType.STRING)</code>?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Mặc định <code>ORDINAL</code> lưu số thứ tự (0,1,2). Chèn/đổi thứ tự enum sẽ làm dữ liệu cũ hiểu sai âm thầm. <code>STRING</code> lưu tên (<code>"ACTIVE"</code>) — bền vững, dễ đọc khi truy vấn trực tiếp.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q3</span>
+            <div class="quiz-q-text"><p>Derived query hoạt động ra sao? Giới hạn của nó?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Spring Data phân tích <strong>tên method</strong> (<code>findByCategoryAndStatus</code>) thành truy vấn lúc khởi động; sai tên thuộc tính ⇒ ứng dụng không khởi động. Giới hạn: tên dài, khó đọc khi &gt; ~3 điều kiện, không lọc động — khi đó dùng <code>@Query</code> hoặc Specification.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q4</span>
+            <div class="quiz-q-text"><p>Vì sao không nối chuỗi vào câu <code>@Query</code>?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Mở cửa cho <strong>SQL injection</strong>. Tham số có tên (<code>:name</code> + <code>@Param</code>) được <em>bind</em> qua <code>PreparedStatement</code> nên dữ liệu người dùng không bao giờ được hiểu là mã SQL.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q5</span>
+            <div class="quiz-q-text"><p><code>Page</code> và <code>Slice</code> khác nhau? Khi nào chọn cái nào?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p><code>Page</code> thực hiện thêm <code>COUNT(*)</code> để biết tổng số bản ghi/trang — hợp giao diện đánh số trang. <code>Slice</code> chỉ lấy <code>size+1</code> bản ghi để biết còn trang sau — rẻ hơn, hợp "tải thêm"/cuộn vô hạn. Với dữ liệu khổng lồ, dùng keyset pagination vì <code>OFFSET</code> lớn rất chậm.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q6</span>
+            <div class="quiz-q-text"><p>Vì sao không nên dùng <code>ddl-auto: update</code> ở production?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Hành vi không dự đoán được (không xoá/đổi cột, có thể sinh schema khác ý), <strong>không có lịch sử, không rollback, không review</strong>. Schema nên quản lý bằng <strong>migration</strong> có phiên bản (Flyway/Liquibase) và Hibernate chỉ <code>validate</code>.</p>
+            </div>
+          </details>
+        </div>
+
+        <h2 id="tong-ket">Tổng kết</h2>
+
+        <p>Sau chương 6, bạn đã nắm:</p>
+        <ul>
+          <li><strong>JPA</strong> là đặc tả, <strong>Hibernate</strong> là cài đặt, <strong>Spring Data JPA</strong> tự sinh repository; ORM không thay thế việc hiểu SQL.</li>
+          <li>Cấu hình <strong>PostgreSQL + HikariCP</strong>; pool nhỏ, transaction ngắn; <code>open-in-view: false</code>.</li>
+          <li><strong>Entity</strong>: constructor rỗng, không <code>final</code>, <code>EnumType.STRING</code>, <code>BigDecimal</code> cho tiền, <code>Instant</code> cho thời điểm; <code>record</code> chỉ cho DTO.</li>
+          <li>**<code>JpaRepository</code><strong> + </strong>derived query<strong> cho truy vấn đơn giản; </strong><code>@Query</code>** với tham số có tên cho truy vấn phức tạp.</li>
+          <li><strong>Projection</strong> lấy đúng cột cần; **<code>Pageable</code>** (<code>Page</code>/<code>Slice</code>) cho danh sách; chặn <code>max-page-size</code>.</li>
+          <li><strong>Schema do migration quản lý</strong>, <code>ddl-auto</code> chỉ <code>validate</code>/<code>none</code> ngoài môi trường học.</li>
+        </ul>
+
+        <h2 id="ket-noi">Kết nối</h2>
+        <ul>
+          <li><strong>Chương 7</strong> — quan hệ giữa entity, lazy/eager, bài toán N+1, <code>@Transactional</code>, khoá lạc quan, Flyway.</li>
+          <li><strong>Chương 8</strong> — mapping entity ↔ DTO bằng MapStruct; tách tầng service/repository.</li>
+          <li><strong>Chương 11</strong> — <code>@DataJpaTest</code> và Testcontainers với PostgreSQL thật.</li>
+          <li><strong>Chương 12</strong> — cache kết quả truy vấn bằng Redis; xử lý batch lớn.</li>
+          <li><strong>Java chương 13 (JDBC)</strong> — những gì JPA đang làm hộ bạn: <code>PreparedStatement</code>, <code>ResultSet</code>, transaction thủ công.</li>
+          <li><strong>Database chương 2-8</strong> — SQL, JOIN, index, transaction, execution plan: kiến thức để đọc câu SQL Hibernate sinh ra.</li>
+          <li><strong>Database chương 5 (Indexes)</strong> — vì sao <code>@Index</code> trên <code>category</code> quan trọng khi lọc theo cột đó.</li>
+        </ul>
+
+        <nav class="chapter-nav">
+          <a href="chuong5.html" class="prev">
+            <div class="dir">← Chương 5</div>
+            <div class="label">Validation &amp;amp; xử lý lỗi</div>
+          </a>
+          <a href="chuong7.html" class="next">
+            <div class="dir">Chương 7 →</div>
+            <div class="label">JPA nâng cao &amp;amp; Transaction</div>
+          </a>
+        </nav>
+
+      </main>
+
+      <aside class="toc">
+        <div class="toc-label">Trong chương này</div>
+        <ul>
+          <li><a href="#bo-ba">1. JPA, Hibernate, Spring Data JPA — ba lớp chồng nhau</a></li>
+          <li><a href="#cai-dat">2. Cài đặt: PostgreSQL + Boot</a></li>
+          <li class="level-3"><a href="#hikari">2.1. HikariCP — connection pool</a></li>
+          <li><a href="#entity">3. Entity — ánh xạ bảng thành lớp</a></li>
+          <li class="level-3"><a href="#luat-entity">3.1. Luật cho entity</a></li>
+          <li class="level-3"><a href="#id-strategy">3.2. Chọn chiến lược sinh khoá</a></li>
+          <li><a href="#repository">4. Repository — chỉ cần khai báo interface</a></li>
+          <li class="level-3"><a href="#derived">4.1. Derived query — tên method <em>là</em> câu truy vấn</a></li>
+          <li><a href="#query">5. <code>@Query</code> — khi cần toàn quyền</a></li>
+          <li class="level-3"><a href="#projection">5.1. Projection — chỉ lấy cột cần</a></li>
+          <li><a href="#phan-trang">6. Phân trang &amp; sắp xếp</a></li>
+          <li><a href="#schema">7. Quản lý schema — đừng để Hibernate sửa DB production</a></li>
+          <li><a href="#cheat-sheet">8. Cheat sheet chương 6</a></li>
+          <li><a href="#bai-tap">Bài tập</a></li>
+          <li><a href="#quiz">Quiz</a></li>
+          <li><a href="#tong-ket">Tổng kết</a></li>
+          <li><a href="#ket-noi">Kết nối</a></li>
+        </ul>
+      </aside>
+
+    </div>
+  </div>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p>
+        Chương 6 — Spring Data JPA · Spring Boot sub-pillar · Pillar 9 IT Basic<br/>
+        <a href="chuong5.html">← Chương 5</a> · <a href="../index.html">Spring Boot TOC</a> · <a href="chuong7.html">Chương 7 →</a>
+      </p>
+    </div>
+  </footer>
+
+  <script src="../../shared/js/chapter.js"></script>
+</body>
+</html>

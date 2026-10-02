@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chương 1 — Hello Spring Boot — từ zero đến API đầu tiên · Spring Boot Sub-pillar</title>
+  <meta name="description" content="Spring và Spring Boot khác nhau ra sao, tạo dự án bằng Spring Initializr, @SpringBootApplication, starter, auto-configuration, embedded Tomcat, DevTools và Actuator." />
+  <meta name="theme-color" content="#4a9a28" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Bitter:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="../../shared/css/base.css">
+  <link rel="stylesheet" href="../css/theme.css">
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="container">
+      <a class="site-logo" href="../../../index.html">
+        <span class="mark mark-spring">Sb</span>
+        Spring Boot · IT Basic
+      </a>
+      <nav>
+        <ul class="site-nav">
+          <li><a href="../../../index.html">IT Basic</a></li>
+          <li><a href="../../index.html">Pillar 9</a></li>
+          <li><a href="../../Java/index.html">Java</a></li>
+          <li><a href="../index.html" class="active">Spring Boot</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <div class="container">
+    <header class="chapter-header">
+      <div class="breadcrumb">
+        <a href="../../../index.html">IT Basic</a><span class="sep">/</span>
+        <a href="../../index.html">Pillar 9</a><span class="sep">/</span>
+        <a href="../index.html">Spring Boot</a><span class="sep">/</span>
+        <span>Chương 1</span>
+      </div>
+      <div class="chapter-num">Chương 01 · Hello Spring Boot</div>
+      <h1 style="font-size: 2.6rem; margin: 0 0 12px; color: var(--ink);">
+        Hello Spring Boot — từ zero đến API đầu tiên
+      </h1>
+      <p class="lead">
+        Spring Framework ra đời năm 2003 để thay thế J2EE nặng nề, nhưng cấu hình nó từng là cơn ác mộng XML. <strong>Spring Boot</strong> (2014) giữ nguyên toàn bộ sức mạnh của Spring và thêm ba thứ: <strong>starter</strong> (gom dependency), <strong>auto-configuration</strong> (tự cấu hình theo thứ có trên classpath) và <strong>embedded server</strong> (chạy bằng <code>java -jar</code>). Chương này đi từ ô tạo dự án trống đến một REST API chạy được — và quan trọng hơn, hiểu <em>vì sao</em> nó chạy với gần như không cấu hình.
+      </p>
+      <div class="chapter-meta">
+        <span class="item"><strong>Bài tập:</strong> 5</span>
+        <span class="item"><strong>Quiz:</strong> 6</span>
+        <span class="item"><strong>Prerequisites:</strong> Java cơ bản (sub-pillar Java, chương 1-9)</span>
+      </div>
+    </header>
+
+    <div class="layout">
+
+      <main class="prose">
+
+        <div class="callout callout-goal">
+          <div class="callout-label">🎯 Mục tiêu chương</div>
+          <ul>
+            <li>Phân biệt <strong>Spring Framework</strong>, <strong>Spring Boot</strong> và hệ sinh thái Spring.</li>
+            <li>Tạo dự án bằng <strong>Spring Initializr</strong> (web và <code>curl</code>), đọc hiểu cấu trúc thư mục và <code>pom.xml</code>.</li>
+            <li>Viết và chạy ứng dụng đầu tiên, gọi thử bằng <code>curl</code>.</li>
+            <li>Giải thích <code>@SpringBootApplication</code> thật sự gồm những gì.</li>
+            <li>Hiểu <strong>starter</strong> và <strong>dependency management</strong> (BOM) — vì sao không cần ghi version.</li>
+            <li>Hiểu cơ chế <strong>auto-configuration</strong>: điều kiện, thứ tự ưu tiên, cách tắt/ghi đè, cách debug.</li>
+            <li>Biết <strong>embedded server</strong>, fat JAR và đổi cổng, đổi server.</li>
+            <li>Dùng <strong>DevTools</strong>, <strong>logging</strong> và <strong>Actuator</strong> ở mức nhập môn.</li>
+          </ul>
+        </div>
+
+        <h2 id="spring-la-gi">1. Spring, Spring Boot — khác nhau thế nào?</h2>
+
+        <p>Người mới hay gọi chung "Spring" cho mọi thứ, nhưng có ba lớp khác nhau:</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Lớp</th><th>Là gì</th><th>Ví dụ</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Spring Framework</strong></td><td>Lõi: IoC container, AOP, MVC, transaction, data access</td><td><code>@Autowired</code>, <code>@Transactional</code>, <code>RestTemplate</code></td></tr>
+              <tr><td><strong>Spring Boot</strong></td><td>Lớp "có chính kiến" phủ lên Spring: starter, auto-config, embedded server, Actuator</td><td><code>@SpringBootApplication</code>, <code>spring-boot-starter-web</code></td></tr>
+              <tr><td><strong>Spring Projects</strong></td><td>Thư viện riêng xây trên Spring/Boot</td><td>Spring Data, Spring Security, Spring Cloud, Spring Batch</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Trước Boot, một ứng dụng web Spring cần: file <code>web.xml</code>, file <code>applicationContext.xml</code> khai báo từng bean, cấu hình <code>DispatcherServlet</code>, cấu hình view resolver, tự chọn version cho 20 thư viện sao cho tương thích nhau, rồi đóng gói <strong>WAR</strong> và triển khai vào Tomcat cài sẵn. Mất nửa ngày trước khi viết dòng code nghiệp vụ đầu tiên.</p>
+        <div class="java-rule"><strong>Spring Boot không thay thế Spring — nó cấu hình Spring giúp bạn.</strong> Mọi thứ bạn học ở các chương sau (DI, MVC, transaction…) vẫn là Spring Framework; Boot chỉ lo phần "lắp ráp".</div>
+        <p>Hai nguyên tắc thiết kế của Boot đáng nhớ ngay từ đầu:</p>
+        <ul>
+          <li><strong>Convention over configuration</strong> — có mặc định hợp lý cho mọi thứ; chỉ cấu hình khi muốn khác mặc định.</li>
+          <li><strong>Back off khi bạn tự khai báo</strong> — nếu bạn tự tạo một bean, Boot rút lui và dùng bean của bạn. Mặc định luôn là "gợi ý", không bao giờ là "áp đặt".</li>
+        </ul>
+
+        <h2 id="initializr">2. Tạo dự án với Spring Initializr</h2>
+
+        <p><strong>start.spring.io</strong> là trình sinh dự án chính thức. Bạn chọn build tool, ngôn ngữ, phiên bản Boot, thông tin dự án và các dependency; nó trả về file <code>.zip</code> chạy được ngay. IntelliJ IDEA, VS Code và STS đều có bản tích hợp gọi cùng dịch vụ này.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Trường</th><th>Chọn gì cho giáo trình này</th><th>Ghi chú</th></tr></thead>
+            <tbody>
+              <tr><td>Project</td><td>Maven</td><td>Gradle cũng được; ví dụ ở đây dùng Maven</td></tr>
+              <tr><td>Language</td><td>Java</td><td>Kotlin cũng là công dân hạng nhất của Spring</td></tr>
+              <tr><td>Spring Boot</td><td>Bản <strong>3.x ổn định</strong> mới nhất</td><td>Tránh <code>SNAPSHOT</code>/<code>M1</code>/<code>RC1</code> khi học</td></tr>
+              <tr><td>Java</td><td><strong>21</strong></td><td>Boot 3 yêu cầu tối thiểu Java 17</td></tr>
+              <tr><td>Packaging</td><td>Jar</td><td>War chỉ cần khi buộc phải deploy vào Tomcat bên ngoài</td></tr>
+              <tr><td>Dependencies</td><td>Spring Web, Spring Boot Actuator, Spring Boot DevTools</td><td>Thêm sau cũng được — chỉ là sửa <code>pom.xml</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Cùng kết quả, không cần mở trình duyệt:</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Terminal</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-fn">curl</span> https://start.spring.io/starter.zip \
+  <span class="tok-fn">-d</span> type=maven-project \
+  <span class="tok-fn">-d</span> language=java \
+  <span class="tok-fn">-d</span> javaVersion=21 \
+  <span class="tok-fn">-d</span> groupId=vn.itbasic \
+  <span class="tok-fn">-d</span> artifactId=demo \
+  <span class="tok-fn">-d</span> name=demo \
+  <span class="tok-fn">-d</span> packageName=vn.itbasic.demo \
+  <span class="tok-fn">-d</span> dependencies=web,actuator,devtools \
+  <span class="tok-fn">-o</span> demo.zip
+
+<span class="tok-fn">unzip</span> demo.zip <span class="tok-kw">-d</span> demo &amp;&amp; cd demo
+<span class="tok-fn">ls</span> <span class="tok-kw">-a</span></code></pre>
+        </div>
+
+        <h3 id="cau-truc">2.1. Cấu trúc thư mục</h3>
+
+        <div class="hierarchy"><pre>demo/
+├── pom.xml                         ← khai báo dependency + plugin build
+├── mvnw, mvnw.cmd                  ← Maven Wrapper: không cần cài Maven
+├── .mvn/wrapper/                   ← cấu hình wrapper
+└── src/
+    ├── main/
+    │   ├── java/vn/itbasic/demo/
+    │   │   └── DemoApplication.java      ← điểm vào (main)
+    │   └── resources/
+    │       ├── application.properties    ← cấu hình (có thể đổi sang .yml)
+    │       ├── static/                   ← file tĩnh: html, css, js, ảnh
+    │       └── templates/                ← template phía server (Thymeleaf…)
+    └── test/
+        └── java/vn/itbasic/demo/
+            └── DemoApplicationTests.java ← test khởi động context</pre></div>
+        <div class="callout callout-tip">
+          <div class="callout-label">💡 Maven Wrapper</div>
+          <p>Luôn chạy <code>./mvnw</code> (Windows: <code>mvnw.cmd</code>) thay vì <code>mvn</code>. Wrapper tự tải đúng phiên bản Maven ghi trong <code>.mvn/wrapper/</code> — cả đội và server CI dùng cùng một phiên bản, không ai phải cài Maven.</p>
+        </div>
+
+        <h3 id="pom">2.2. Đọc <code>pom.xml</code></h3>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>pom.xml</span><button class="copy-btn">Copy</button></div>
+<pre><code>&lt;?xml <span class="tok-fn">version</span>=<span class="tok-str">"1.0"</span> <span class="tok-fn">encoding</span>=<span class="tok-str">"UTF-8"</span>?<span class="tok-kw">&gt;</span>
+<span class="tok-kw">&lt;project</span> <span class="tok-fn">xmlns</span>=<span class="tok-str">"http://maven.apache.org/POM/4.0.0"</span>
+         <span class="tok-fn">xmlns:xsi</span>=<span class="tok-str">"http://www.w3.org/2001/XMLSchema-instance"</span>
+         <span class="tok-fn">xsi:schemaLocation</span>=<span class="tok-str">"http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd"</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;modelVersion</span><span class="tok-kw">&gt;</span>4.0.0<span class="tok-kw">&lt;/modelVersion</span><span class="tok-kw">&gt;</span>
+
+    <span class="tok-com">&lt;!-- (1) Parent: nguồn của toàn bộ "dependency management" --&gt;</span>
+    <span class="tok-kw">&lt;parent</span><span class="tok-kw">&gt;</span>
+        <span class="tok-kw">&lt;groupId</span><span class="tok-kw">&gt;</span>org.springframework.boot<span class="tok-kw">&lt;/groupId</span><span class="tok-kw">&gt;</span>
+        <span class="tok-kw">&lt;artifactId</span><span class="tok-kw">&gt;</span>spring-boot-starter-parent<span class="tok-kw">&lt;/artifactId</span><span class="tok-kw">&gt;</span>
+        <span class="tok-kw">&lt;version</span><span class="tok-kw">&gt;</span>3.4.1<span class="tok-kw">&lt;/version</span><span class="tok-kw">&gt;</span>
+        <span class="tok-kw">&lt;relativePath</span><span class="tok-kw">/&gt;</span>
+    <span class="tok-kw">&lt;/parent</span><span class="tok-kw">&gt;</span>
+
+    <span class="tok-kw">&lt;groupId</span><span class="tok-kw">&gt;</span>vn.itbasic<span class="tok-kw">&lt;/groupId</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;artifactId</span><span class="tok-kw">&gt;</span>demo<span class="tok-kw">&lt;/artifactId</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;version</span><span class="tok-kw">&gt;</span>0.0.1-SNAPSHOT<span class="tok-kw">&lt;/version</span><span class="tok-kw">&gt;</span>
+
+    <span class="tok-kw">&lt;properties</span><span class="tok-kw">&gt;</span>
+        <span class="tok-kw">&lt;java.version</span><span class="tok-kw">&gt;</span>21<span class="tok-kw">&lt;/java.version</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;/properties</span><span class="tok-kw">&gt;</span>
+
+    <span class="tok-kw">&lt;dependencies</span><span class="tok-kw">&gt;</span>
+        <span class="tok-com">&lt;!-- (2) Starter: KHÔNG ghi version, parent đã chọn sẵn --&gt;</span>
+        <span class="tok-kw">&lt;dependency</span><span class="tok-kw">&gt;</span>
+            <span class="tok-kw">&lt;groupId</span><span class="tok-kw">&gt;</span>org.springframework.boot<span class="tok-kw">&lt;/groupId</span><span class="tok-kw">&gt;</span>
+            <span class="tok-kw">&lt;artifactId</span><span class="tok-kw">&gt;</span>spring-boot-starter-web<span class="tok-kw">&lt;/artifactId</span><span class="tok-kw">&gt;</span>
+        <span class="tok-kw">&lt;/dependency</span><span class="tok-kw">&gt;</span>
+        <span class="tok-kw">&lt;dependency</span><span class="tok-kw">&gt;</span>
+            <span class="tok-kw">&lt;groupId</span><span class="tok-kw">&gt;</span>org.springframework.boot<span class="tok-kw">&lt;/groupId</span><span class="tok-kw">&gt;</span>
+            <span class="tok-kw">&lt;artifactId</span><span class="tok-kw">&gt;</span>spring-boot-starter-actuator<span class="tok-kw">&lt;/artifactId</span><span class="tok-kw">&gt;</span>
+        <span class="tok-kw">&lt;/dependency</span><span class="tok-kw">&gt;</span>
+        <span class="tok-kw">&lt;dependency</span><span class="tok-kw">&gt;</span>
+            <span class="tok-kw">&lt;groupId</span><span class="tok-kw">&gt;</span>org.springframework.boot<span class="tok-kw">&lt;/groupId</span><span class="tok-kw">&gt;</span>
+            <span class="tok-kw">&lt;artifactId</span><span class="tok-kw">&gt;</span>spring-boot-devtools<span class="tok-kw">&lt;/artifactId</span><span class="tok-kw">&gt;</span>
+            <span class="tok-kw">&lt;scope</span><span class="tok-kw">&gt;</span>runtime<span class="tok-kw">&lt;/scope</span><span class="tok-kw">&gt;</span>
+            <span class="tok-kw">&lt;optional</span><span class="tok-kw">&gt;</span>true<span class="tok-kw">&lt;/optional</span><span class="tok-kw">&gt;</span>
+        <span class="tok-kw">&lt;/dependency</span><span class="tok-kw">&gt;</span>
+        <span class="tok-kw">&lt;dependency</span><span class="tok-kw">&gt;</span>
+            <span class="tok-kw">&lt;groupId</span><span class="tok-kw">&gt;</span>org.springframework.boot<span class="tok-kw">&lt;/groupId</span><span class="tok-kw">&gt;</span>
+            <span class="tok-kw">&lt;artifactId</span><span class="tok-kw">&gt;</span>spring-boot-starter-test<span class="tok-kw">&lt;/artifactId</span><span class="tok-kw">&gt;</span>
+            <span class="tok-kw">&lt;scope</span><span class="tok-kw">&gt;</span>test<span class="tok-kw">&lt;/scope</span><span class="tok-kw">&gt;</span>
+        <span class="tok-kw">&lt;/dependency</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;/dependencies</span><span class="tok-kw">&gt;</span>
+
+    <span class="tok-kw">&lt;build</span><span class="tok-kw">&gt;</span>
+        <span class="tok-kw">&lt;plugins</span><span class="tok-kw">&gt;</span>
+            <span class="tok-com">&lt;!-- (3) Plugin đóng gói fat JAR chạy được bằng java -jar --&gt;</span>
+            <span class="tok-kw">&lt;plugin</span><span class="tok-kw">&gt;</span>
+                <span class="tok-kw">&lt;groupId</span><span class="tok-kw">&gt;</span>org.springframework.boot<span class="tok-kw">&lt;/groupId</span><span class="tok-kw">&gt;</span>
+                <span class="tok-kw">&lt;artifactId</span><span class="tok-kw">&gt;</span>spring-boot-maven-plugin<span class="tok-kw">&lt;/artifactId</span><span class="tok-kw">&gt;</span>
+            <span class="tok-kw">&lt;/plugin</span><span class="tok-kw">&gt;</span>
+        <span class="tok-kw">&lt;/plugins</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;/build</span><span class="tok-kw">&gt;</span>
+<span class="tok-kw">&lt;/project</span><span class="tok-kw">&gt;</span></code></pre>
+        </div>
+        <p>Ba chỗ cần để ý: <strong>(1)</strong> parent quản lý version cho ~hàng trăm thư viện đã được kiểm tra tương thích; <strong>(2)</strong> starter không ghi version; <strong>(3)</strong> plugin đóng gói. Đó là toàn bộ "phép màu" ở tầng build.</p>
+
+        <h2 id="ung-dung-dau-tien">3. Ứng dụng đầu tiên</h2>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>DemoApplication.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-kw">package</span> vn.itbasic.demo;
+
+<span class="tok-kw">import</span> org.springframework.boot.<span class="tok-cls">SpringApplication</span>;
+<span class="tok-kw">import</span> org.springframework.boot.autoconfigure.<span class="tok-cls">SpringBootApplication</span>;
+
+<span class="tok-ann">@SpringBootApplication</span>
+<span class="tok-kw">public</span> <span class="tok-kw">class</span> <span class="tok-cls">DemoApplication</span> {
+
+    <span class="tok-kw">public</span> <span class="tok-kw">static</span> <span class="tok-kw">void</span> <span class="tok-fn">main</span>(<span class="tok-cls">String</span>[] args) {
+        <span class="tok-cls">SpringApplication</span>.<span class="tok-fn">run</span>(<span class="tok-cls">DemoApplication</span>.<span class="tok-kw">class</span>, args);
+    }
+}</code></pre>
+        </div>
+        <p>Thêm một controller trong <strong>cùng package hoặc package con</strong> của <code>DemoApplication</code> (lý do ở mục 4):</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>HelloController.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-kw">package</span> vn.itbasic.demo;
+
+<span class="tok-kw">import</span> org.springframework.web.bind.annotation.<span class="tok-cls">GetMapping</span>;
+<span class="tok-kw">import</span> org.springframework.web.bind.annotation.<span class="tok-cls">RequestParam</span>;
+<span class="tok-kw">import</span> org.springframework.web.bind.annotation.<span class="tok-cls">RestController</span>;
+
+<span class="tok-ann">@RestController</span>
+<span class="tok-kw">public</span> <span class="tok-kw">class</span> <span class="tok-cls">HelloController</span> {
+
+    <span class="tok-ann">@GetMapping</span>(<span class="tok-str">"/hello"</span>)
+    <span class="tok-kw">public</span> <span class="tok-cls">String</span> <span class="tok-fn">hello</span>(<span class="tok-ann">@RequestParam</span>(defaultValue = <span class="tok-str">"Spring"</span>) <span class="tok-cls">String</span> name) {
+        <span class="tok-kw">return</span> <span class="tok-str">"Xin chào, "</span> + name + <span class="tok-str">"!"</span>;
+    }
+}</code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Terminal</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-fn">./mvnw</span> spring-boot:run
+
+<span class="tok-com"># cửa sổ khác:</span>
+<span class="tok-fn">curl</span> http://localhost:8080/hello
+<span class="tok-fn">curl</span> <span class="tok-str">"http://localhost:8080/hello?name=Canh"</span>
+<span class="tok-fn">curl</span> http://localhost:8080/actuator/health</code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Kết quả</span><button class="copy-btn">Copy</button></div>
+<pre><code>Xin chào, Spring!
+Xin chào, Canh!
+{<span class="tok-cls">"status"</span>:<span class="tok-str">"UP"</span>}</code></pre>
+        </div>
+        <p>Bạn vừa có một web server với <strong>không một dòng cấu hình</strong>: không <code>web.xml</code>, không cài Tomcat, không khai báo <code>DispatcherServlet</code>. Mục kế tiếp giải thích ai đã làm những việc đó.</p>
+
+        <h2 id="spring-boot-application">4. <code>@SpringBootApplication</code> thực chất là gì?</h2>
+
+        <p>Đây là <strong>meta-annotation</strong> — gộp ba annotation:</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Khai triển</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@SpringBootConfiguration</span>     <span class="tok-com">// = @Configuration: lớp này chứa định nghĩa bean</span>
+<span class="tok-ann">@EnableAutoConfiguration</span>     <span class="tok-com">// bật auto-configuration (mục 6)</span>
+<span class="tok-ann">@ComponentScan</span>               <span class="tok-com">// quét package hiện tại + con, tìm @Component/@Service/@Controller...</span>
+<span class="tok-kw">public</span> <span class="tok-ann">@interface</span> <span class="tok-cls">SpringBootApplication</span> { }</code></pre>
+        </div>
+        <div class="java-note">
+          <h4>Vì sao controller phải nằm dưới package của lớp main?</h4>
+          <p><code>@ComponentScan</code> không chỉ định <code>basePackages</code> nên mặc định quét <strong>từ package của lớp được chú thích trở xuống</strong>. Đặt <code>HelloController</code> ở <code>vn.itbasic.other</code> (ngang hàng, không phải con của <code>vn.itbasic.demo</code>) thì Spring <strong>không thấy</strong> — endpoint trả 404 mà không có thông báo lỗi nào. Đây là bẫy số một của người mới. Quy tắc: lớp main ở package gốc, mọi thứ khác ở bên dưới.</p>
+        </div>
+
+        <h3 id="luong-khoi-dong">4.1. Chuyện gì xảy ra khi <code>run()</code> được gọi</h3>
+
+        <div class="jvm-flow">
+          <div class="stages">
+            <div class="stage"><div class="stage-title">1. Chuẩn bị</div><div class="stage-content">Đọc <code>application.properties</code>, biến môi trường, tham số dòng lệnh → <code>Environment</code></div></div>
+            <div class="stage blue"><div class="stage-title">2. Tạo context</div><div class="stage-content">Tạo <code>ApplicationContext</code> — container chứa mọi bean</div></div>
+            <div class="stage"><div class="stage-title">3. Quét &amp; đăng ký</div><div class="stage-content"><code>@ComponentScan</code> + auto-config tạo các <code>BeanDefinition</code></div></div>
+            <div class="stage blue"><div class="stage-title">4. Khởi tạo bean</div><div class="stage-content">Tạo bean, tiêm dependency (chương 2)</div></div>
+            <div class="stage"><div class="stage-title">5. Mở server</div><div class="stage-content">Khởi động Tomcat nhúng, đăng ký <code>DispatcherServlet</code></div></div>
+            <div class="stage blue"><div class="stage-title">6. Sẵn sàng</div><div class="stage-content">Phát sự kiện <code>ApplicationReadyEvent</code>; log <code>Started DemoApplication in 1.9 seconds</code></div></div>
+          </div>
+          <div class="caption">Toàn bộ vòng đời nằm trong một lời gọi <code>SpringApplication.run()</code>.</div>
+        </div>
+
+        <h2 id="starter">5. Starter và dependency management</h2>
+
+        <p><strong>Starter</strong> là một dependency "rỗng" chỉ để kéo theo một bộ dependency khác đã được chọn sẵn và kiểm tra tương thích. Thay vì tự ghép Spring MVC + Jackson + Tomcat + validation + logging, bạn thêm một dòng <code>spring-boot-starter-web</code>.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Starter</th><th>Kéo theo</th><th>Dùng khi</th></tr></thead>
+            <tbody>
+              <tr><td><code>spring-boot-starter-web</code></td><td>Spring MVC, Jackson, Tomcat nhúng</td><td>REST API, web MVC</td></tr>
+              <tr><td><code>spring-boot-starter-data-jpa</code></td><td>Hibernate, Spring Data JPA, HikariCP</td><td>Truy cập CSDL quan hệ (chương 6-7)</td></tr>
+              <tr><td><code>spring-boot-starter-security</code></td><td>Spring Security</td><td>Xác thực &amp; phân quyền (chương 9-10)</td></tr>
+              <tr><td><code>spring-boot-starter-validation</code></td><td>Hibernate Validator (Bean Validation)</td><td>Kiểm tra đầu vào (chương 5)</td></tr>
+              <tr><td><code>spring-boot-starter-actuator</code></td><td>Endpoint health/metrics/info</td><td>Giám sát, readiness probe</td></tr>
+              <tr><td><code>spring-boot-starter-test</code></td><td>JUnit 5, Mockito, AssertJ, MockMvc</td><td>Kiểm thử (chương 11)</td></tr>
+              <tr><td><code>spring-boot-starter-data-redis</code></td><td>Lettuce, Spring Data Redis</td><td>Cache, session (chương 12)</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout callout-note">
+          <div class="callout-label">📌 Không ghi version</div>
+          <p>Khi dùng <code>spring-boot-starter-parent</code>, mọi thư viện được quản lý (Jackson, Hibernate, Tomcat, JUnit…) đều có version cố định do Boot chọn. Bạn thêm <code>jackson-databind</code> mà không ghi version vẫn chạy đúng. Muốn ghi đè version của một thư viện: đặt property, ví dụ <code>&lt;jackson-bom.version&gt;…&lt;/jackson-bom.version&gt;</code> trong <code>&lt;properties&gt;</code>. Cơ chế này gọi là <strong>BOM</strong> (Bill of Materials).</p>
+        </div>
+        <p>Xem toàn bộ cây dependency thật sự được kéo về:</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Terminal</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-fn">./mvnw</span> dependency:tree | head -40</code></pre>
+        </div>
+
+        <h2 id="auto-configuration">6. Auto-configuration — phép màu có điều kiện</h2>
+
+        <p>Khi <code>@EnableAutoConfiguration</code> bật, Boot đọc danh sách vài trăm lớp cấu hình trong file <code>META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports</code> (bên trong <code>spring-boot-autoconfigure.jar</code>). Mỗi lớp được bảo vệ bởi <strong>điều kiện</strong>; chỉ khi điều kiện thoả thì nó mới kích hoạt.</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Minh hoạ cách một auto-config viết (rút gọn)</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@AutoConfiguration</span>
+<span class="tok-ann">@ConditionalOnClass</span>(<span class="tok-cls">DataSource</span>.<span class="tok-kw">class</span>)               <span class="tok-com">// chỉ khi có JDBC trên classpath</span>
+<span class="tok-kw">public</span> <span class="tok-kw">class</span> <span class="tok-cls">DataSourceAutoConfiguration</span> {
+
+    <span class="tok-ann">@Bean</span>
+    <span class="tok-ann">@ConditionalOnMissingBean</span>                       <span class="tok-com">// chỉ khi BẠN CHƯA tự khai báo DataSource</span>
+    <span class="tok-ann">@ConditionalOnProperty</span>(<span class="tok-str">"spring.datasource.url"</span>) <span class="tok-com">// chỉ khi có cấu hình URL</span>
+    <span class="tok-kw">public</span> <span class="tok-cls">DataSource</span> <span class="tok-fn">dataSource</span>(<span class="tok-cls">DataSourceProperties</span> props) {
+        <span class="tok-kw">return</span> props.<span class="tok-fn">initializeDataSourceBuilder</span>().<span class="tok-fn">build</span>();
+    }
+}</code></pre>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Điều kiện</th><th>Nghĩa</th></tr></thead>
+            <tbody>
+              <tr><td><code>@ConditionalOnClass</code></td><td>Có lớp X trên classpath (⇒ bạn đã thêm starter tương ứng)</td></tr>
+              <tr><td><code>@ConditionalOnMissingBean</code></td><td>Chưa có bean kiểu X — <strong>cơ chế "back off"</strong> khi bạn tự khai báo</td></tr>
+              <tr><td><code>@ConditionalOnProperty</code></td><td>Property trong <code>application.properties</code> có giá trị mong muốn</td></tr>
+              <tr><td><code>@ConditionalOnWebApplication</code></td><td>Đây là ứng dụng web (servlet/reactive)</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="java-rule"><strong>Thêm starter ⇒ classpath thay đổi ⇒ điều kiện thoả ⇒ bean được tạo.</strong> Không có phép màu nào khác. Thêm <code>spring-boot-starter-data-jpa</code> và có <code>spring.datasource.url</code>, bạn tự động có <code>DataSource</code>, <code>EntityManagerFactory</code>, <code>TransactionManager</code>.</div>
+
+        <h3 id="debug-auto-config">6.1. Debug: vì sao bean này (không) được tạo?</h3>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>Terminal</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-fn">./mvnw</span> spring-boot:run <span class="tok-kw">-Dspring-boot.run.arguments=--debug</span>
+<span class="tok-com"># hoặc trong application.properties:   debug=true</span></code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Log (rút gọn)</span><button class="copy-btn">Copy</button></div>
+<pre><code>============================
+CONDITIONS EVALUATION REPORT
+============================
+
+Positive matches:
+-----------------
+   DispatcherServletAutoConfiguration matched:
+      - @ConditionalOnClass found required class <span class="tok-str">'org.springframework.web.servlet.DispatcherServlet'</span>
+   ServletWebServerFactoryAutoConfiguration matched: ...
+
+Negative matches:
+-----------------
+   <span class="tok-cls">DataSourceAutoConfiguration</span>:
+      Did not match:
+         - @ConditionalOnClass did not find required class <span class="tok-str">'javax.sql.DataSource'</span> ...</code></pre>
+        </div>
+        <p>Báo cáo này là công cụ số một khi "tự nhiên bean không có / có hai bean". <strong>Positive matches</strong> = đã bật vì sao; <strong>Negative matches</strong> = không bật vì thiếu điều kiện gì. Endpoint tương đương lúc chạy: <code>/actuator/conditions</code>.</p>
+
+        <h3 id="tat-auto-config">6.2. Ghi đè hoặc tắt</h3>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>Hai cách</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-com">// Cách 1: tự khai báo bean cùng kiểu → auto-config "back off"</span>
+<span class="tok-ann">@Configuration</span>
+<span class="tok-kw">class</span> <span class="tok-cls">MyConfig</span> {
+    <span class="tok-ann">@Bean</span>
+    <span class="tok-cls">ObjectMapper</span> <span class="tok-fn">objectMapper</span>() {                    <span class="tok-com">// thay ObjectMapper mặc định của Boot</span>
+        <span class="tok-kw">return</span> <span class="tok-kw">new</span> <span class="tok-cls">ObjectMapper</span>().<span class="tok-fn">findAndRegisterModules</span>();
+    }
+}
+
+<span class="tok-com">// Cách 2: loại hẳn một auto-config</span>
+<span class="tok-ann">@SpringBootApplication</span>(exclude = <span class="tok-cls">DataSourceAutoConfiguration</span>.<span class="tok-kw">class</span>)
+<span class="tok-kw">public</span> <span class="tok-kw">class</span> <span class="tok-cls">DemoApplication</span> { ... }
+<span class="tok-com">// hoặc: spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration</span></code></pre>
+        </div>
+        <div class="callout callout-gotcha">
+          <div class="callout-label">⚠️ Lỗi kinh điển ngày đầu</div>
+          <p>Thêm <code>spring-boot-starter-data-jpa</code> mà chưa cấu hình CSDL → ứng dụng <strong>không khởi động được</strong>: <em>"Failed to configure a DataSource: 'url' attribute is not specified"</em>. Không phải bug: auto-config đã bật nhưng thiếu thông tin. Hoặc cấu hình <code>spring.datasource.*</code>, hoặc bỏ starter, hoặc <code>exclude</code> như trên.</p>
+        </div>
+
+        <h2 id="embedded-server">7. Embedded server và fat JAR</h2>
+
+        <p><code>spring-boot-starter-web</code> kèm <strong>Tomcat nhúng</strong> như một thư viện bình thường — web server nằm <em>trong</em> ứng dụng chứ không phải ứng dụng nằm trong server. Hệ quả: một file duy nhất chạy ở mọi nơi.</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Terminal</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-fn">./mvnw</span> clean package                       <span class="tok-com"> # tạo target/demo-0.0.1-SNAPSHOT.jar</span>
+<span class="tok-fn">java</span> <span class="tok-kw">-jar</span> target/demo-0.0.1-SNAPSHOT.jar   <span class="tok-com"> # chạy — chỉ cần có JRE</span>
+<span class="tok-fn">java</span> <span class="tok-kw">-jar</span> target/demo-0.0.1-SNAPSHOT.jar <span class="tok-kw">--server.port=9090</span>  <span class="tok-com"> # đổi cổng không cần build lại</span></code></pre>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Mô hình</th><th>Cách deploy</th><th>Ghi chú</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Fat JAR</strong> (mặc định)</td><td><code>java -jar app.jar</code></td><td>Một bước, hợp Docker/Kubernetes. Gần như mặc định hiện nay</td></tr>
+              <tr><td><strong>WAR</strong></td><td>Thả vào Tomcat/JBoss cài sẵn</td><td>Chỉ khi hạ tầng cũ bắt buộc</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Đổi sang server khác (Jetty, Undertow) bằng cách loại Tomcat khỏi starter và thêm starter kia; hầu như không ai cần. Thứ đáng biết hơn là <strong>Java 21 virtual threads</strong>:</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>application.properties</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-cls">server.port</span>=<span class="tok-num">8080</span>
+<span class="tok-cls">spring.threads.virtual.enabled</span>=<span class="tok-kw">true</span><span class="tok-com">     # Boot 3.2+ &amp; Java 21: mỗi request chạy trên virtual thread</span></code></pre>
+        </div>
+
+        <h2 id="devtools-logging">8. DevTools, logging và Actuator</h2>
+
+
+        <h3 id="devtools">8.1. DevTools — vòng lặp phát triển nhanh</h3>
+
+        <ul>
+          <li><strong>Tự restart</strong> khi file <code>.class</code> đổi (dùng hai classloader nên nhanh hơn khởi động lạnh nhiều).</li>
+          <li><strong>LiveReload</strong>: trình duyệt tự tải lại khi file tĩnh đổi.</li>
+          <li>Tự bật cache template ở chế độ <code>dev</code>, tự tắt khi chạy bản đóng gói (<code>java -jar</code>).</li>
+          <li>IntelliJ: bật <em>Build project automatically</em> và <em>Allow auto-make to start even if developer application is currently running</em> để restart khi lưu.</li>
+        </ul>
+
+        <h3 id="logging">8.2. Logging</h3>
+
+        <p>Boot dùng <strong>SLF4J + Logback</strong>, đã cấu hình sẵn (cột màu, ngày giờ, tên thread). Đừng <code>System.out.println</code> — dùng logger:</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>LogDemo.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@RestController</span>
+<span class="tok-kw">public</span> <span class="tok-kw">class</span> <span class="tok-cls">HelloController</span> {
+
+    <span class="tok-kw">private</span> <span class="tok-kw">static</span> <span class="tok-kw">final</span> <span class="tok-cls">Logger</span> log = <span class="tok-cls">LoggerFactory</span>.<span class="tok-fn">getLogger</span>(<span class="tok-cls">HelloController</span>.<span class="tok-kw">class</span>);
+
+    <span class="tok-ann">@GetMapping</span>(<span class="tok-str">"/hello"</span>)
+    <span class="tok-kw">public</span> <span class="tok-cls">String</span> <span class="tok-fn">hello</span>(<span class="tok-ann">@RequestParam</span>(defaultValue = <span class="tok-str">"Spring"</span>) <span class="tok-cls">String</span> name) {
+        log.<span class="tok-fn">info</span>(<span class="tok-str">"Chào {}"</span>, name);          <span class="tok-com">// {} thay vì nối chuỗi — chỉ ghép khi level bật</span>
+        log.<span class="tok-fn">debug</span>(<span class="tok-str">"chi tiết chỉ thấy ở DEBUG"</span>);
+        <span class="tok-kw">return</span> <span class="tok-str">"Xin chào, "</span> + name + <span class="tok-str">"!"</span>;
+    }
+}</code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>application.properties</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-cls">logging.level.root</span>=INFO
+<span class="tok-cls">logging.level.vn.itbasic</span>=DEBUG<span class="tok-com">                 # bật DEBUG riêng package của bạn</span>
+<span class="tok-cls">logging.level.org.springframework.web</span>=DEBUG<span class="tok-com">    # xem Spring MVC làm gì</span>
+<span class="tok-cls">logging.file.name</span>=logs/app.log</code></pre>
+        </div>
+
+        <h3 id="actuator">8.3. Actuator — nhìn vào bên trong ứng dụng đang chạy</h3>
+
+        <p>Mặc định chỉ <code>health</code> được mở qua HTTP (an toàn). Mở thêm có chọn lọc:</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>application.properties</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-cls">management.endpoints.web.exposure.include</span>=health,info,metrics,conditions
+<span class="tok-cls">management.endpoint.health.show-details</span>=when-authorized</code></pre>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Endpoint</th><th>Cho biết</th></tr></thead>
+            <tbody>
+              <tr><td><code>/actuator/health</code></td><td>UP/DOWN — dùng cho load balancer &amp; Kubernetes probe</td></tr>
+              <tr><td><code>/actuator/metrics</code></td><td>Số liệu JVM, HTTP, pool kết nối (Micrometer)</td></tr>
+              <tr><td><code>/actuator/conditions</code></td><td>Báo cáo auto-configuration lúc chạy</td></tr>
+              <tr><td><code>/actuator/env</code></td><td>Mọi property đang hiệu lực — <strong>không</strong> mở ra internet</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout callout-warning">
+          <div class="callout-label">🔒 Đừng mở hết</div>
+          <p><code>include=*</code> trên môi trường thật làm lộ <code>env</code>, <code>heapdump</code>, <code>beans</code>… Chỉ mở những gì cần và đặt sau xác thực (chương 9).</p>
+        </div>
+
+        <h2 id="so-sanh">9. Đặt Spring Boot cạnh những thứ bạn đã biết</h2>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th></th><th>Spring Boot</th><th>Express (Node)</th><th>NestJS</th><th>FastAPI (Python)</th></tr></thead>
+            <tbody>
+              <tr><td>Triết lý</td><td>Framework đầy đủ, có chính kiến</td><td>Tối giản, tự ráp</td><td>Có chính kiến, mô phỏng Spring/Angular</td><td>Nhẹ, type-hint-driven</td></tr>
+              <tr><td>DI container</td><td>✅ lõi của framework</td><td>❌ tự lo</td><td>✅ (decorator)</td><td>Có <code>Depends</code> đơn giản</td></tr>
+              <tr><td>Cấu hình</td><td>Auto-config + properties</td><td>Tự viết</td><td>Module + config service</td><td>Tự viết</td></tr>
+              <tr><td>Chạy</td><td><code>java -jar</code></td><td><code>node app.js</code></td><td><code>node dist/main.js</code></td><td><code>uvicorn</code></td></tr>
+              <tr><td>Điểm mạnh</td><td>Hệ sinh thái, ổn định, hiệu năng, doanh nghiệp</td><td>Linh hoạt, nhanh để bắt đầu</td><td>Cấu trúc rõ cho đội lớn</td><td>Nhanh viết, hợp AI/data</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Nếu bạn đã học <strong>NestJS</strong> trong thư mục <code>Fullstack-ContactCenter</code> (phần E), bạn sẽ thấy quen: <code>@Controller</code>↔<code>@RestController</code>, <code>@Injectable</code>↔<code>@Service</code>, <code>Module</code>↔<code>@Configuration</code>, Guard↔Security filter. NestJS vay mượn khá nhiều từ Spring.</p>
+
+        <h2 id="cheat-sheet">10. Cheat sheet chương 1</h2>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>Lệnh hay dùng</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-fn">./mvnw</span> spring-boot:run                <span class="tok-com"> # chạy dev</span>
+<span class="tok-fn">./mvnw</span> clean package                  <span class="tok-com"> # build fat JAR (kèm chạy test)</span>
+<span class="tok-fn">./mvnw</span> clean package <span class="tok-kw">-DskipTests</span>      <span class="tok-com"> # build bỏ qua test</span>
+<span class="tok-fn">java</span> <span class="tok-kw">-jar</span> target/app.jar <span class="tok-kw">--server.port=9090</span>
+<span class="tok-fn">./mvnw</span> dependency:tree                <span class="tok-com"> # xem cây dependency</span>
+<span class="tok-fn">java</span> <span class="tok-kw">-jar</span> app.jar <span class="tok-kw">--debug</span>             <span class="tok-com"> # báo cáo auto-config</span></code></pre>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Cần gì</th><th>Làm gì</th></tr></thead>
+            <tbody>
+              <tr><td>Tạo dự án</td><td>start.spring.io / <code>curl</code> / IDE</td></tr>
+              <tr><td>Thêm khả năng mới</td><td>Thêm <strong>starter</strong> vào <code>pom.xml</code></td></tr>
+              <tr><td>Đổi hành vi mặc định</td><td>Property trong <code>application.properties</code>, hoặc tự khai báo <code>@Bean</code></td></tr>
+              <tr><td>Bean không có/đúng không?</td><td><code>--debug</code> hoặc <code>/actuator/conditions</code></td></tr>
+              <tr><td>Endpoint 404</td><td>Controller có nằm dưới package của lớp main?</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="bai-tap">Bài tập</h2>
+
+        <div class="exercises">
+
+          <div class="exercise">
+            <h4>Dự án đầu tiên, tạo bằng <code>curl</code></h4>
+            <div class="exercise-body">
+              <p>Dùng lệnh <code>curl</code> ở mục 2 để tạo dự án với Java 21 và ba dependency <code>web</code>, <code>actuator</code>, <code>devtools</code>. Giải nén, chạy bằng <code>./mvnw spring-boot:run</code>.</p>
+              <ul>
+                <li>Gọi <code>/actuator/health</code> và chụp kết quả.</li>
+                <li>Đổi cổng sang <code>9000</code> bằng <strong>hai cách khác nhau</strong> (property và tham số dòng lệnh).</li>
+                <li>Mở log, tìm dòng <code>Tomcat started on port</code> và <code>Started DemoApplication in</code>.</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Cách 1: <code>server.port=9000</code> trong <code>application.properties</code>. Cách 2: <code>./mvnw spring-boot:run -Dspring-boot.run.arguments=--server.port=9000</code>. Tham số dòng lệnh luôn thắng file properties — thứ tự ưu tiên này là chủ đề chương 3.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Bẫy <code>@ComponentScan</code></h4>
+            <div class="exercise-body">
+              <p>Tạo package <code>vn.itbasic.other</code> (ngang hàng với <code>vn.itbasic.demo</code>) và đặt một <code>@RestController</code> bên trong.</p>
+              <ul>
+                <li>Quan sát: endpoint trả về gì? Có lỗi khi khởi động không?</li>
+                <li>Sửa bằng <strong>hai cách khác nhau</strong>.</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Cách 1: chuyển lớp main lên <code>vn.itbasic</code> (package cha chung). Cách 2: <code>@SpringBootApplication(scanBasePackages = {"vn.itbasic"})</code> (hoặc <code>@ComponentScan</code>). Cách 1 là chuẩn; cách 2 chỉ dùng khi cấu trúc buộc phải thế.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Đọc báo cáo auto-configuration</h4>
+            <div class="exercise-body">
+              <p>Chạy với <code>--debug</code> và trả lời bằng cách tìm trong báo cáo:</p>
+              <ul>
+                <li>Auto-config nào đã dựng <code>DispatcherServlet</code>?</li>
+                <li>Vì sao <code>DataSourceAutoConfiguration</code> nằm ở <em>Negative matches</em>?</li>
+                <li>Thêm <code>spring-boot-starter-data-jpa</code> (chưa cấu hình DB) và chạy lại — chuyện gì xảy ra? Giải thích bằng báo cáo.</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p><code>DispatcherServletAutoConfiguration</code>. Negative vì thiếu lớp JDBC trên classpath (<code>@ConditionalOnClass</code>). Thêm JPA ⇒ lớp có mặt ⇒ điều kiện thoả ⇒ cần URL ⇒ lỗi <em>Failed to configure a DataSource</em>. Khắc phục: khai báo <code>spring.datasource.url</code> (H2 trong bộ nhớ đủ để thử).</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Ghi đè bean mặc định</h4>
+            <div class="exercise-body">
+              <p>Boot tự tạo một <code>ObjectMapper</code> (Jackson). Làm cho API <code>GET /now</code> trả về <code>LocalDate.now()</code> dạng chuỗi <code>2025-03-01</code> thay vì mảng số <code>[2025,3,1]</code>.</p>
+              <ul>
+                <li>Viết endpoint trả <code>LocalDate</code>, xem JSON mặc định.</li>
+                <li>Cách 1: sửa bằng <strong>property</strong>. Cách 2: sửa bằng <strong>tự khai báo bean</strong>.</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Property: <code>spring.jackson.serialization.write-dates-as-timestamps=false</code>. Bean: khai báo <code>@Bean Jackson2ObjectMapperBuilderCustomizer</code> — hoặc thay hẳn <code>ObjectMapper</code>. Ưu tiên customizer/property vì không phá các mặc định khác của Boot.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Fat JAR và so sánh thời gian khởi động</h4>
+            <div class="exercise-body">
+              <p>Build fat JAR rồi chạy trên máy bạn. Sau đó bật <code>spring.threads.virtual.enabled=true</code>.</p>
+              <ul>
+                <li>Dùng <code>jar tf</code> liệt kê nội dung: tìm <code>BOOT-INF/lib/</code> và <code>tomcat-embed-core-*.jar</code>.</li>
+                <li>Ghi lại thời gian khởi động trước/sau khi bật virtual thread. Có khác không? Vì sao?</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Khởi động gần như không đổi: virtual thread ảnh hưởng <em>cách xử lý request đồng thời</em>, không phải thời gian boot. Lợi ích hiện ở tải cao với I/O chặn (chương 13).</p>
+                </div>
+              </details>
+            </div>
+          </div>
+        </div>
+
+        <h2 id="quiz">Quiz</h2>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q1</span>
+            <div class="quiz-q-text"><p>Spring Boot khác Spring Framework ở điểm nào?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Spring Framework là <strong>lõi</strong> (IoC, MVC, transaction…). Spring Boot là lớp <strong>tự động lắp ráp</strong> phủ lên: starter (gom dependency), auto-configuration (tự cấu hình theo classpath), embedded server (chạy bằng <code>java -jar</code>), Actuator. Boot không thêm tính năng lõi mới — nó loại bỏ việc cấu hình thủ công.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q2</span>
+            <div class="quiz-q-text"><p><code>@SpringBootApplication</code> gồm những annotation nào?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Ba cái: <code>@SpringBootConfiguration</code> (một <code>@Configuration</code>), <code>@EnableAutoConfiguration</code> (bật auto-config), <code>@ComponentScan</code> (quét bean từ package của lớp này trở xuống).</p>
+              <p>Hệ quả thực tế: lớp main phải ở package gốc. Controller đặt ở package ngang hàng sẽ không được quét.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q3</span>
+            <div class="quiz-q-text"><p>Starter là gì? Vì sao khai báo starter không cần ghi version?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Starter là dependency "gom" — một dòng kéo theo cả bộ thư viện tương thích. Version không cần ghi vì <code>spring-boot-starter-parent</code> (hoặc BOM <code>spring-boot-dependencies</code>) quản lý version cho hàng trăm thư viện, đã kiểm tra chạy cùng nhau.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q4</span>
+            <div class="quiz-q-text"><p>Auto-configuration hoạt động ra sao và vì sao bạn "ghi đè" được nó?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Boot đọc danh sách lớp auto-config; mỗi lớp có điều kiện (<code>@ConditionalOnClass</code>, <code>@ConditionalOnProperty</code>…). Bean mặc định gắn <code>@ConditionalOnMissingBean</code> nên <strong>khi bạn tự khai báo bean cùng kiểu, Boot tự rút lui</strong> — mặc định chỉ là gợi ý.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q5</span>
+            <div class="quiz-q-text"><p>Làm sao biết một auto-config có được bật không, và vì sao?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Chạy với <code>--debug</code> (hoặc <code>debug=true</code>) để in <em>Conditions Evaluation Report</em>: Positive matches (bật + lý do), Negative matches (không bật + điều kiện thiếu). Lúc ứng dụng chạy, dùng endpoint <code>/actuator/conditions</code>.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q6</span>
+            <div class="quiz-q-text"><p>Embedded server có ý nghĩa gì với việc deploy?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Server nằm trong ứng dụng ⇒ build ra <strong>một fat JAR</strong> chạy bằng <code>java -jar</code> ở bất cứ đâu có JRE; không cần cài/cấu hình Tomcat riêng. Phù hợp container (Docker) và CI/CD. WAR chỉ dùng khi buộc phải deploy vào server ứng dụng có sẵn.</p>
+            </div>
+          </details>
+        </div>
+
+        <h2 id="tong-ket">Tổng kết</h2>
+
+        <p>Sau chương 1, bạn đã nắm:</p>
+        <ul>
+          <li><strong>Spring</strong> là lõi, <strong>Spring Boot</strong> là lớp tự lắp ráp, <strong>Spring Projects</strong> là các thư viện riêng (Data, Security, Cloud…).</li>
+          <li><strong>Initializr</strong> (web hoặc <code>curl</code>) tạo khung dự án; <strong>Maven Wrapper</strong> <code>./mvnw</code> giữ phiên bản build nhất quán.</li>
+          <li>**<code>@SpringBootApplication</code>** = <code>@Configuration</code> + <code>@EnableAutoConfiguration</code> + <code>@ComponentScan</code> — lớp main đặt ở package gốc.</li>
+          <li><strong>Starter</strong> gom dependency; <strong>parent/BOM</strong> quản lý version.</li>
+          <li><strong>Auto-configuration</strong> là cấu hình có điều kiện; <code>@ConditionalOnMissingBean</code> cho phép bạn ghi đè; debug bằng <code>--debug</code>.</li>
+          <li><strong>Embedded Tomcat + fat JAR</strong> ⇒ deploy một file; Java 21 bật virtual threads bằng một property.</li>
+          <li><strong>DevTools</strong> (restart nhanh), <strong>Logback/SLF4J</strong> (logging), <strong>Actuator</strong> (health, metrics) — mở có chọn lọc.</li>
+        </ul>
+
+        <h2 id="ket-noi">Kết nối</h2>
+        <ul>
+          <li><strong>Chương 2 (IoC &amp; DI)</strong> — <code>ApplicationContext</code> vừa xuất hiện chính là container; ta sẽ mổ xẻ nó.</li>
+          <li><strong>Chương 3 (Cấu hình &amp; Profiles)</strong> — <code>application.properties</code>, thứ tự ưu tiên, <code>@ConfigurationProperties</code>.</li>
+          <li><strong>Chương 4 (Spring MVC &amp; REST)</strong> — <code>@RestController</code> và <code>DispatcherServlet</code> làm gì với request.</li>
+          <li><strong>Chương 14 (Docker &amp; thực chiến)</strong> — fat JAR được đóng vào image và triển khai.</li>
+          <li><strong>Java Chương 1 &amp; 14</strong> — Maven, cấu trúc dự án, build — nền tảng đã học.</li>
+          <li><strong>Fullstack-ContactCenter E1</strong> — kiến trúc NestJS &amp; DI: so sánh trực tiếp với Spring.</li>
+        </ul>
+
+        <nav class="chapter-nav">
+          <a href="../index.html" class="prev">
+            <div class="dir">← Mục lục</div>
+            <div class="label">Spring Boot</div>
+          </a>
+          <a href="chuong2.html" class="next">
+            <div class="dir">Chương 2 →</div>
+            <div class="label">IoC &amp;amp; Dependency Injection</div>
+          </a>
+        </nav>
+
+      </main>
+
+      <aside class="toc">
+        <div class="toc-label">Trong chương này</div>
+        <ul>
+          <li><a href="#spring-la-gi">1. Spring, Spring Boot — khác nhau thế nào?</a></li>
+          <li><a href="#initializr">2. Tạo dự án với Spring Initializr</a></li>
+          <li class="level-3"><a href="#cau-truc">2.1. Cấu trúc thư mục</a></li>
+          <li class="level-3"><a href="#pom">2.2. Đọc <code>pom.xml</code></a></li>
+          <li><a href="#ung-dung-dau-tien">3. Ứng dụng đầu tiên</a></li>
+          <li><a href="#spring-boot-application">4. <code>@SpringBootApplication</code> thực chất là gì?</a></li>
+          <li class="level-3"><a href="#luong-khoi-dong">4.1. Chuyện gì xảy ra khi <code>run()</code> được gọi</a></li>
+          <li><a href="#starter">5. Starter và dependency management</a></li>
+          <li><a href="#auto-configuration">6. Auto-configuration — phép màu có điều kiện</a></li>
+          <li class="level-3"><a href="#debug-auto-config">6.1. Debug: vì sao bean này (không) được tạo?</a></li>
+          <li class="level-3"><a href="#tat-auto-config">6.2. Ghi đè hoặc tắt</a></li>
+          <li><a href="#embedded-server">7. Embedded server và fat JAR</a></li>
+          <li><a href="#devtools-logging">8. DevTools, logging và Actuator</a></li>
+          <li class="level-3"><a href="#devtools">8.1. DevTools — vòng lặp phát triển nhanh</a></li>
+          <li class="level-3"><a href="#logging">8.2. Logging</a></li>
+          <li class="level-3"><a href="#actuator">8.3. Actuator — nhìn vào bên trong ứng dụng đang chạy</a></li>
+          <li><a href="#so-sanh">9. Đặt Spring Boot cạnh những thứ bạn đã biết</a></li>
+          <li><a href="#cheat-sheet">10. Cheat sheet chương 1</a></li>
+          <li><a href="#bai-tap">Bài tập</a></li>
+          <li><a href="#quiz">Quiz</a></li>
+          <li><a href="#tong-ket">Tổng kết</a></li>
+          <li><a href="#ket-noi">Kết nối</a></li>
+        </ul>
+      </aside>
+
+    </div>
+  </div>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p>
+        Chương 1 — Hello Spring Boot · Spring Boot sub-pillar · Pillar 9 IT Basic<br/>
+        <a href="../index.html">Spring Boot TOC</a> · <a href="chuong2.html">Chương 2 →</a>
+      </p>
+    </div>
+  </footer>
+
+  <script src="../../shared/js/chapter.js"></script>
+</body>
+</html>

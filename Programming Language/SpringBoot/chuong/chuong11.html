@@ -1,0 +1,751 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chương 11 — Kiểm thử Spring Boot — từ unit test đến Testcontainers · Spring Boot Sub-pillar</title>
+  <meta name="description" content="Kim tự tháp test cho Spring Boot, unit test với Mockito, test lát cắt @WebMvcTest/@DataJpaTest, kiểm thử bảo mật với spring-security-test, integration test với @SpringBootTest và Testcontainers PostgreSQL, quản lý dữ liệu test và thời gian." />
+  <meta name="theme-color" content="#4a9a28" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Bitter:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="../../shared/css/base.css">
+  <link rel="stylesheet" href="../css/theme.css">
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="container">
+      <a class="site-logo" href="../../../index.html">
+        <span class="mark mark-spring">Sb</span>
+        Spring Boot · IT Basic
+      </a>
+      <nav>
+        <ul class="site-nav">
+          <li><a href="../../../index.html">IT Basic</a></li>
+          <li><a href="../../index.html">Pillar 9</a></li>
+          <li><a href="../../Java/index.html">Java</a></li>
+          <li><a href="../index.html" class="active">Spring Boot</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <div class="container">
+    <header class="chapter-header">
+      <div class="breadcrumb">
+        <a href="../../../index.html">IT Basic</a><span class="sep">/</span>
+        <a href="../../index.html">Pillar 9</a><span class="sep">/</span>
+        <a href="../index.html">Spring Boot</a><span class="sep">/</span>
+        <span>Chương 11</span>
+      </div>
+      <div class="chapter-num">Chương 11 · Kiểm thử</div>
+      <h1 style="font-size: 2.6rem; margin: 0 0 12px; color: var(--ink);">
+        Kiểm thử Spring Boot — từ unit test đến Testcontainers
+      </h1>
+      <p class="lead">
+        Code backend không có test là code <strong>không dám sửa</strong>. Spring Boot cho bạn một bộ công cụ kiểm thử rất đầy đủ — nhưng cũng dễ lạm dụng: gắn <code>@SpringBootTest</code> lên mọi test làm bộ test chạy 10 phút và không ai muốn chạy. Chương này dạy cách <strong>chọn đúng loại test cho đúng việc</strong>: unit test thuần (mili-giây), <strong>test lát cắt</strong> (<code>@WebMvcTest</code>, <code>@DataJpaTest</code>) cho từng tầng, và <strong>integration test với CSDL thật</strong> bằng <strong>Testcontainers</strong> cho những gì mock không chứng minh được.
+      </p>
+      <div class="chapter-meta">
+        <span class="item"><strong>Bài tập:</strong> 5</span>
+        <span class="item"><strong>Quiz:</strong> 6</span>
+        <span class="item"><strong>Prerequisites:</strong> Chương 1-10</span>
+      </div>
+    </header>
+
+    <div class="layout">
+
+      <main class="prose">
+
+        <div class="callout callout-goal">
+          <div class="callout-label">🎯 Mục tiêu chương</div>
+          <ul>
+            <li>Chọn đúng loại test theo <strong>kim tự tháp</strong>: unit → slice → integration.</li>
+            <li>Viết <strong>unit test</strong> service bằng JUnit 5 + Mockito + AssertJ <strong>không cần Spring</strong>.</li>
+            <li>Dùng **<code>@WebMvcTest</code> + <code>MockMvc</code>** kiểm thử controller, validation và mã lỗi.</li>
+            <li>Kiểm thử <strong>bảo mật</strong> với <code>@WithMockUser</code>/<code>jwt()</code> của <code>spring-security-test</code>.</li>
+            <li>Dùng **<code>@DataJpaTest</code> + Testcontainers (PostgreSQL)** để kiểm thử repository, migration và N+1.</li>
+            <li>Viết <strong>integration test</strong> <code>@SpringBootTest</code> toàn luồng và quản lý dữ liệu/thời gian trong test.</li>
+            <li>Tránh các bẫy: test chậm do context, mock quá mức, test phụ thuộc thứ tự/dữ liệu chung.</li>
+          </ul>
+        </div>
+
+        <h2 id="kim-tu-thap">1. Chọn đúng loại test</h2>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Loại</th><th>Dựng gì</th><th>Tốc độ</th><th>Chứng minh được</th><th>Annotation</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Unit</strong></td><td>Chỉ 1 lớp, phụ thuộc là mock</td><td>~ms</td><td>Logic nghiệp vụ</td><td><code>@ExtendWith(MockitoExtension.class)</code> — <strong>không có Spring</strong></td></tr>
+              <tr><td><strong>Slice — web</strong></td><td>Chỉ tầng MVC (controller, advice, filter, JSON); service là mock</td><td>~giây</td><td>Mapping URL, validation, mã lỗi, JSON, phân quyền theo URL</td><td><code>@WebMvcTest</code></td></tr>
+              <tr><td><strong>Slice — data</strong></td><td>Chỉ JPA + CSDL; không có web/service</td><td>~giây</td><td>Truy vấn, ánh xạ entity, migration, ràng buộc DB</td><td><code>@DataJpaTest</code></td></tr>
+              <tr><td><strong>Integration</strong></td><td>Toàn bộ ứng dụng (+ CSDL thật)</td><td>~chục giây</td><td>Các lớp <strong>ghép đúng với nhau</strong>; transaction thật</td><td><code>@SpringBootTest</code></td></tr>
+              <tr><td><strong>End-to-end</strong></td><td>Hệ thống thật + trình duyệt/client</td><td>~phút</td><td>Luồng người dùng</td><td>Playwright/Cypress (ngoài phạm vi)</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="java-rule"><strong>Nhiều test nhanh ở đáy, ít test chậm ở đỉnh.</strong> Mỗi bug nên bị bắt ở tầng <em>thấp nhất có thể</em>: lỗi công thức tính tiền → unit test; sai mapping URL/validation → <code>@WebMvcTest</code>; truy vấn sai → <code>@DataJpaTest</code>; ghép sai cấu hình giữa các lớp → một vài <code>@SpringBootTest</code>. Đảo ngược kim tự tháp (toàn <code>@SpringBootTest</code>) cho bộ test chậm, mong manh, khó khoanh vùng lỗi.</div>
+        <p><code>spring-boot-starter-test</code> đã gói sẵn mọi thứ: <strong>JUnit 5</strong>, <strong>Mockito</strong>, <strong>AssertJ</strong>, <strong>Hamcrest</strong>, <strong>JSONassert</strong>, <strong>JsonPath</strong>, <strong>Spring Test/MockMvc</strong>.</p>
+
+        <h2 id="unit">2. Unit test — không cần Spring</h2>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>OrderServiceTest.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@ExtendWith</span>(<span class="tok-cls">MockitoExtension</span>.<span class="tok-kw">class</span>)                      <span class="tok-com">// không khởi động Spring: nhanh và đơn giản</span>
+<span class="tok-kw">class</span> <span class="tok-cls">OrderServiceTest</span> {
+
+    <span class="tok-ann">@Mock</span> <span class="tok-cls">CustomerRepository</span> customers;
+    <span class="tok-ann">@Mock</span> <span class="tok-cls">ProductRepository</span> products;
+    <span class="tok-ann">@Mock</span> <span class="tok-cls">OrderRepository</span> orders;
+    <span class="tok-ann">@Mock</span> <span class="tok-cls">OrderMapper</span> mapper;
+    <span class="tok-ann">@InjectMocks</span> <span class="tok-cls">OrderService</span> service;                    <span class="tok-com">// tạo service bằng CONSTRUCTOR, tiêm các mock vào</span>
+
+    <span class="tok-ann">@Test</span>
+    <span class="tok-kw">void</span> <span class="tok-fn">place_throwsWhenProductDiscontinued</span>() {
+        <span class="tok-com">// given</span>
+        <span class="tok-kw">var</span> customer = <span class="tok-kw">new</span> <span class="tok-cls">Customer</span>(<span class="tok-str">"An"</span>, <span class="tok-str">"an@example.com"</span>);
+        <span class="tok-kw">var</span> banned = <span class="tok-kw">new</span> <span class="tok-cls">Product</span>(<span class="tok-str">"Cũ"</span>, <span class="tok-kw">new</span> <span class="tok-cls">BigDecimal</span>(<span class="tok-str">"10.00"</span>), <span class="tok-str">"sach"</span>);
+        banned.<span class="tok-fn">discontinue</span>();
+        <span class="tok-fn">given</span>(customers.<span class="tok-fn">findById</span>(<span class="tok-num">1L</span>)).<span class="tok-fn">willReturn</span>(<span class="tok-cls">Optional</span>.<span class="tok-fn">of</span>(customer));
+        <span class="tok-fn">given</span>(products.<span class="tok-fn">findById</span>(<span class="tok-num">7L</span>)).<span class="tok-fn">willReturn</span>(<span class="tok-cls">Optional</span>.<span class="tok-fn">of</span>(banned));
+        <span class="tok-kw">var</span> req = <span class="tok-kw">new</span> <span class="tok-cls">CreateOrderRequest</span>(<span class="tok-num">1L</span>, <span class="tok-cls">List</span>.<span class="tok-fn">of</span>(<span class="tok-kw">new</span> <span class="tok-cls">CreateOrderRequest</span>.<span class="tok-cls">Line</span>(<span class="tok-num">7L</span>, <span class="tok-num">2</span>)));
+
+        <span class="tok-com">// when / then</span>
+        <span class="tok-fn">assertThatThrownBy</span>(() -&gt; service.<span class="tok-fn">place</span>(req))
+                .<span class="tok-fn">isInstanceOf</span>(<span class="tok-cls">BusinessRuleException</span>.<span class="tok-kw">class</span>)
+                .<span class="tok-fn">hasMessageContaining</span>(<span class="tok-str">"ngừng bán"</span>);
+        <span class="tok-fn">verify</span>(orders, <span class="tok-fn">never</span>()).<span class="tok-fn">save</span>(<span class="tok-fn">any</span>());              <span class="tok-com">// không được lưu gì</span>
+    }
+
+    <span class="tok-ann">@Test</span>
+    <span class="tok-kw">void</span> <span class="tok-fn">place_savesOrderWithItems</span>() {
+        <span class="tok-kw">var</span> customer = <span class="tok-kw">new</span> <span class="tok-cls">Customer</span>(<span class="tok-str">"An"</span>, <span class="tok-str">"an@example.com"</span>);
+        <span class="tok-kw">var</span> p = <span class="tok-kw">new</span> <span class="tok-cls">Product</span>(<span class="tok-str">"Java 21"</span>, <span class="tok-kw">new</span> <span class="tok-cls">BigDecimal</span>(<span class="tok-str">"99.00"</span>), <span class="tok-str">"sach"</span>);
+        <span class="tok-fn">given</span>(customers.<span class="tok-fn">findById</span>(<span class="tok-num">1L</span>)).<span class="tok-fn">willReturn</span>(<span class="tok-cls">Optional</span>.<span class="tok-fn">of</span>(customer));
+        <span class="tok-fn">given</span>(products.<span class="tok-fn">findById</span>(<span class="tok-num">7L</span>)).<span class="tok-fn">willReturn</span>(<span class="tok-cls">Optional</span>.<span class="tok-fn">of</span>(p));
+        <span class="tok-fn">given</span>(orders.<span class="tok-fn">save</span>(<span class="tok-fn">any</span>(<span class="tok-cls">Order</span>.<span class="tok-kw">class</span>))).<span class="tok-fn">willAnswer</span>(inv -&gt; inv.<span class="tok-fn">getArgument</span>(<span class="tok-num">0</span>));   <span class="tok-com">// trả lại chính nó</span>
+
+        service.<span class="tok-fn">place</span>(<span class="tok-kw">new</span> <span class="tok-cls">CreateOrderRequest</span>(<span class="tok-num">1L</span>, <span class="tok-cls">List</span>.<span class="tok-fn">of</span>(<span class="tok-kw">new</span> <span class="tok-cls">CreateOrderRequest</span>.<span class="tok-cls">Line</span>(<span class="tok-num">7L</span>, <span class="tok-num">3</span>))));
+
+        <span class="tok-cls">ArgumentCaptor</span>&lt;<span class="tok-cls">Order</span>&gt; captor = <span class="tok-cls">ArgumentCaptor</span>.<span class="tok-fn">forClass</span>(<span class="tok-cls">Order</span>.<span class="tok-kw">class</span>);
+        <span class="tok-fn">verify</span>(orders).<span class="tok-fn">save</span>(captor.<span class="tok-fn">capture</span>());
+        <span class="tok-fn">assertThat</span>(captor.<span class="tok-fn">getValue</span>().<span class="tok-fn">getItems</span>()).<span class="tok-fn">hasSize</span>(<span class="tok-num">1</span>);
+        <span class="tok-fn">assertThat</span>(captor.<span class="tok-fn">getValue</span>().<span class="tok-fn">total</span>()).<span class="tok-fn">isEqualByComparingTo</span>(<span class="tok-str">"297.00"</span>);
+    }
+}</code></pre>
+        </div>
+        <p>Vì sao unit test này <strong>không cần Spring</strong>? Do chương 2: constructor injection ⇒ <code>new OrderService(a, b, c, d)</code> là đủ. Nếu service dùng field injection, bạn phải dùng reflection/<code>@InjectMocks</code> và Spring-test mới chạy được — đó là cái giá của lựa chọn đó.</p>
+
+        <h3 id="mock-hay-khong">2.1. Khi nào nên (không nên) mock</h3>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Mock</th><th>Đừng mock</th></tr></thead>
+            <tbody>
+              <tr><td>Phụ thuộc <strong>chậm/ngoài</strong>: DB, HTTP, email, hàng đợi, đồng hồ</td><td><strong>Value object, DTO, record, entity thuần</strong> — dùng thật</td></tr>
+              <tr><td>Phụ thuộc phi tất định: thời gian, ngẫu nhiên</td><td><strong>Lớp bạn đang kiểm thử</strong> (mock chính nó ⇒ test vô nghĩa)</td></tr>
+              <tr><td>Phụ thuộc cần <strong>ép tình huống lỗi</strong> (ném exception)</td><td>Thư viện chuẩn (<code>List</code>, <code>String</code>) hay logic đơn giản</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout callout-gotcha">
+          <div class="callout-label">⚠️ Mock quá mức ⇒ test dính chặt cài đặt</div>
+          <p>Test xác nhận "hàm A gọi hàm B đúng 1 lần với tham số X" hỏng mỗi khi refactor dù <strong>hành vi không đổi</strong>. Ưu tiên kiểm tra <strong>kết quả/trạng thái quan sát được</strong> (giá trị trả về, exception, thứ được lưu) hơn là <em>cách</em> đạt kết quả. <code>verify(...)</code> chỉ khi tác dụng phụ <em>chính là</em> mục đích (gửi email, lưu DB).</p>
+        </div>
+
+        <h2 id="webmvc">3. <code>@WebMvcTest</code> — kiểm thử controller</h2>
+
+        <p>Dựng <strong>chỉ tầng web</strong>: <code>DispatcherServlet</code>, controller được chỉ định, <code>@ControllerAdvice</code>, filter, cấu hình JSON. Service/repository <strong>không</strong> được tạo ⇒ bạn cung cấp mock.</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>ProductControllerTest.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@WebMvcTest</span>(<span class="tok-cls">ProductController</span>.<span class="tok-kw">class</span>)
+<span class="tok-ann">@Import</span>(<span class="tok-cls">SecurityConfig</span>.<span class="tok-kw">class</span>)                          <span class="tok-com">// slice không quét @Configuration — nạp cấu hình bảo mật thủ công</span>
+<span class="tok-kw">class</span> <span class="tok-cls">ProductControllerTest</span> {
+
+    <span class="tok-ann">@Autowired</span> <span class="tok-cls">MockMvc</span> mvc;
+    <span class="tok-ann">@MockitoBean</span> <span class="tok-cls">ProductService</span> service;               <span class="tok-com">// Boot 3.4+: @MockitoBean thay @MockBean (đã deprecated)</span>
+    <span class="tok-ann">@MockitoBean</span> <span class="tok-cls">JwtDecoder</span> jwtDecoder;                <span class="tok-com">// SecurityConfig cần bean này; mock cho khỏi dựng thật</span>
+
+    <span class="tok-ann">@Test</span>
+    <span class="tok-ann">@WithMockUser</span>                                      <span class="tok-com">// giả lập người dùng đã đăng nhập (spring-security-test)</span>
+    <span class="tok-kw">void</span> <span class="tok-fn">get_returnsProductJson</span>() <span class="tok-kw">throws</span> <span class="tok-cls">Exception</span> {
+        <span class="tok-fn">given</span>(service.<span class="tok-fn">get</span>(<span class="tok-num">42L</span>)).<span class="tok-fn">willReturn</span>(<span class="tok-kw">new</span> <span class="tok-cls">ProductResponse</span>(<span class="tok-num">42L</span>, <span class="tok-str">"Java 21"</span>, <span class="tok-kw">new</span> <span class="tok-cls">BigDecimal</span>(<span class="tok-str">"99.00"</span>)));
+
+        mvc.<span class="tok-fn">perform</span>(<span class="tok-fn">get</span>(<span class="tok-str">"/api/products/42"</span>))
+           .<span class="tok-fn">andExpect</span>(<span class="tok-fn">status</span>().<span class="tok-fn">isOk</span>())
+           .<span class="tok-fn">andExpect</span>(<span class="tok-fn">content</span>().<span class="tok-fn">contentTypeCompatibleWith</span>(<span class="tok-cls">MediaType</span>.<span class="tok-cls">APPLICATION_JSON</span>))
+           .<span class="tok-fn">andExpect</span>(<span class="tok-fn">jsonPath</span>(<span class="tok-str">"$.id"</span>).<span class="tok-fn">value</span>(<span class="tok-num">42</span>))
+           .<span class="tok-fn">andExpect</span>(<span class="tok-fn">jsonPath</span>(<span class="tok-str">"$.name"</span>).<span class="tok-fn">value</span>(<span class="tok-str">"Java 21"</span>));
+    }
+
+    <span class="tok-ann">@Test</span>
+    <span class="tok-ann">@WithMockUser</span>
+    <span class="tok-kw">void</span> <span class="tok-fn">get_returns404ProblemDetail</span>() <span class="tok-kw">throws</span> <span class="tok-cls">Exception</span> {
+        <span class="tok-fn">given</span>(service.<span class="tok-fn">get</span>(<span class="tok-num">99L</span>)).<span class="tok-fn">willThrow</span>(<span class="tok-kw">new</span> <span class="tok-cls">NotFoundException</span>(<span class="tok-str">"product"</span>, <span class="tok-num">99L</span>));
+
+        mvc.<span class="tok-fn">perform</span>(<span class="tok-fn">get</span>(<span class="tok-str">"/api/products/99"</span>))
+           .<span class="tok-fn">andExpect</span>(<span class="tok-fn">status</span>().<span class="tok-fn">isNotFound</span>())
+           .<span class="tok-fn">andExpect</span>(<span class="tok-fn">content</span>().<span class="tok-fn">contentType</span>(<span class="tok-str">"application/problem+json"</span>))
+           .<span class="tok-fn">andExpect</span>(<span class="tok-fn">jsonPath</span>(<span class="tok-str">"$.code"</span>).<span class="tok-fn">value</span>(<span class="tok-str">"PRODUCT_NOT_FOUND"</span>));
+    }
+
+    <span class="tok-ann">@Test</span>
+    <span class="tok-ann">@WithMockUser</span>(roles = <span class="tok-str">"ADMIN"</span>)
+    <span class="tok-kw">void</span> <span class="tok-fn">create_rejectsInvalidBody</span>() <span class="tok-kw">throws</span> <span class="tok-cls">Exception</span> {
+        mvc.<span class="tok-fn">perform</span>(<span class="tok-fn">post</span>(<span class="tok-str">"/api/products"</span>)
+                   .<span class="tok-fn">contentType</span>(<span class="tok-cls">MediaType</span>.<span class="tok-cls">APPLICATION_JSON</span>)
+                   .<span class="tok-fn">content</span>(<span class="tok-str">"""
+                            {"name": "", "price": -5}
+                            """</span>))
+           .<span class="tok-fn">andExpect</span>(<span class="tok-fn">status</span>().<span class="tok-fn">isBadRequest</span>())
+           .<span class="tok-fn">andExpect</span>(<span class="tok-fn">jsonPath</span>(<span class="tok-str">"$.errors.name"</span>).<span class="tok-fn">isArray</span>())
+           .<span class="tok-fn">andExpect</span>(<span class="tok-fn">jsonPath</span>(<span class="tok-str">"$.errors.price"</span>).<span class="tok-fn">isArray</span>());
+        <span class="tok-fn">verifyNoInteractions</span>(service);                 <span class="tok-com">// validation chặn TRƯỚC khi vào service</span>
+    }
+}</code></pre>
+        </div>
+
+        <h3 id="security-test">3.1. Kiểm thử bảo mật</h3>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>Phân quyền &amp; JWT</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Test</span>
+<span class="tok-kw">void</span> <span class="tok-fn">create_requiresAuthentication</span>() <span class="tok-kw">throws</span> <span class="tok-cls">Exception</span> {
+    mvc.<span class="tok-fn">perform</span>(<span class="tok-fn">post</span>(<span class="tok-str">"/api/products"</span>).<span class="tok-fn">contentType</span>(<span class="tok-cls">APPLICATION_JSON</span>).<span class="tok-fn">content</span>(<span class="tok-str">"{}"</span>))
+       .<span class="tok-fn">andExpect</span>(<span class="tok-fn">status</span>().<span class="tok-fn">isUnauthorized</span>());                                <span class="tok-com">// không có token → 401</span>
+}
+
+<span class="tok-ann">@Test</span>
+<span class="tok-ann">@WithMockUser</span>(roles = <span class="tok-str">"USER"</span>)
+<span class="tok-kw">void</span> <span class="tok-fn">adminEndpoint_forbidsUser</span>() <span class="tok-kw">throws</span> <span class="tok-cls">Exception</span> {
+    mvc.<span class="tok-fn">perform</span>(<span class="tok-fn">delete</span>(<span class="tok-str">"/api/admin/products/1"</span>))
+       .<span class="tok-fn">andExpect</span>(<span class="tok-fn">status</span>().<span class="tok-fn">isForbidden</span>());                                   <span class="tok-com">// đủ đăng nhập nhưng thiếu quyền → 403</span>
+}
+
+<span class="tok-ann">@Test</span>
+<span class="tok-kw">void</span> <span class="tok-fn">withJwt_asAdmin</span>() <span class="tok-kw">throws</span> <span class="tok-cls">Exception</span> {                                    <span class="tok-com">// mô phỏng JWT (không cần ký thật)</span>
+    mvc.<span class="tok-fn">perform</span>(<span class="tok-fn">delete</span>(<span class="tok-str">"/api/admin/products/1"</span>)
+                   .<span class="tok-fn">with</span>(<span class="tok-fn">jwt</span>().<span class="tok-fn">authorities</span>(<span class="tok-kw">new</span> <span class="tok-cls">SimpleGrantedAuthority</span>(<span class="tok-str">"ROLE_ADMIN"</span>))))
+       .<span class="tok-fn">andExpect</span>(<span class="tok-fn">status</span>().<span class="tok-fn">isNoContent</span>());
+}
+
+<span class="tok-com">// IDOR (chương 9): người dùng A không đọc được đơn của B</span>
+<span class="tok-ann">@Test</span>
+<span class="tok-kw">void</span> <span class="tok-fn">getOrder_ofAnotherUser_returns404</span>() <span class="tok-kw">throws</span> <span class="tok-cls">Exception</span> {
+    <span class="tok-fn">given</span>(orderService.<span class="tok-fn">get</span>(<span class="tok-num">5L</span>)).<span class="tok-fn">willThrow</span>(<span class="tok-kw">new</span> <span class="tok-cls">NotFoundException</span>(<span class="tok-str">"order"</span>, <span class="tok-num">5L</span>));
+    mvc.<span class="tok-fn">perform</span>(<span class="tok-fn">get</span>(<span class="tok-str">"/api/orders/5"</span>).<span class="tok-fn">with</span>(<span class="tok-fn">jwt</span>().<span class="tok-fn">jwt</span>(j -&gt; j.<span class="tok-fn">subject</span>(<span class="tok-str">"a@example.com"</span>))))
+       .<span class="tok-fn">andExpect</span>(<span class="tok-fn">status</span>().<span class="tok-fn">isNotFound</span>());
+}</code></pre>
+        </div>
+        <div class="callout callout-tip">
+          <div class="callout-label">💡 Test phân quyền cho <em>mọi</em> endpoint nhạy cảm</div>
+          <p>Viết một bảng test tham số hoá <code>(method, url, vai trò) → mã mong đợi</code> (<code>@ParameterizedTest</code>). Khi ai đó thêm endpoint mà quên khoá, hoặc đảo thứ tự <code>authorizeHttpRequests</code>, bộ test này sẽ đỏ — rẻ hơn rất nhiều so với sự cố bảo mật.</p>
+        </div>
+
+        <h2 id="datajpa">4. <code>@DataJpaTest</code> + Testcontainers</h2>
+
+        <p><code>@DataJpaTest</code> dựng <strong>chỉ tầng JPA</strong>, mỗi test chạy trong một transaction rồi <strong>rollback</strong> (dữ liệu không rò sang test khác). Mặc định nó thay CSDL của bạn bằng <strong>H2 trong bộ nhớ</strong> — nhanh nhưng <strong>không phải PostgreSQL</strong>: khác kiểu dữ liệu, hàm, cách lock ⇒ test xanh mà production vẫn lỗi (đặc biệt với <code>@Query</code> native, <code>jsonb</code>, <code>FOR UPDATE</code>, Flyway migration viết cho PostgreSQL).</p>
+        <div class="java-rule"><strong>Test với đúng CSDL bạn chạy production.</strong> <strong>Testcontainers</strong> khởi động một container Docker thật (PostgreSQL, Redis, Kafka…) cho test rồi huỷ — không cần cài gì, cô lập, tái lập được. Từ Boot 3.1, <code>@ServiceConnection</code> tự nối ứng dụng tới container, không cần cấu hình URL.</div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>pom.xml (test scope)</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-kw">&lt;dependency</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;groupId</span><span class="tok-kw">&gt;</span>org.springframework.boot<span class="tok-kw">&lt;/groupId</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;artifactId</span><span class="tok-kw">&gt;</span>spring-boot-testcontainers<span class="tok-kw">&lt;/artifactId</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;scope</span><span class="tok-kw">&gt;</span>test<span class="tok-kw">&lt;/scope</span><span class="tok-kw">&gt;</span>
+<span class="tok-kw">&lt;/dependency</span><span class="tok-kw">&gt;</span>
+<span class="tok-kw">&lt;dependency</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;groupId</span><span class="tok-kw">&gt;</span>org.testcontainers<span class="tok-kw">&lt;/groupId</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;artifactId</span><span class="tok-kw">&gt;</span>junit-jupiter<span class="tok-kw">&lt;/artifactId</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;scope</span><span class="tok-kw">&gt;</span>test<span class="tok-kw">&lt;/scope</span><span class="tok-kw">&gt;</span>
+<span class="tok-kw">&lt;/dependency</span><span class="tok-kw">&gt;</span>
+<span class="tok-kw">&lt;dependency</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;groupId</span><span class="tok-kw">&gt;</span>org.testcontainers<span class="tok-kw">&lt;/groupId</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;artifactId</span><span class="tok-kw">&gt;</span>postgresql<span class="tok-kw">&lt;/artifactId</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;scope</span><span class="tok-kw">&gt;</span>test<span class="tok-kw">&lt;/scope</span><span class="tok-kw">&gt;</span>
+<span class="tok-kw">&lt;/dependency</span><span class="tok-kw">&gt;</span></code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>ProductRepositoryTest.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@DataJpaTest</span>
+<span class="tok-ann">@AutoConfigureTestDatabase</span>(replace = <span class="tok-cls">AutoConfigureTestDatabase</span>.<span class="tok-cls">Replace</span>.<span class="tok-cls">NONE</span>)    <span class="tok-com">// KHÔNG thay bằng H2</span>
+<span class="tok-ann">@Testcontainers</span>
+<span class="tok-kw">class</span> <span class="tok-cls">ProductRepositoryTest</span> {
+
+    <span class="tok-ann">@Container</span>
+    <span class="tok-ann">@ServiceConnection</span>                                                      <span class="tok-com">// tự gán spring.datasource.* theo container</span>
+    <span class="tok-kw">static</span> <span class="tok-cls">PostgreSQLContainer</span>&lt;?&gt; postgres = <span class="tok-kw">new</span> <span class="tok-cls">PostgreSQLContainer</span>&lt;&gt;(<span class="tok-str">"postgres:16-alpine"</span>);
+
+    <span class="tok-ann">@Autowired</span> <span class="tok-cls">ProductRepository</span> repo;
+    <span class="tok-ann">@Autowired</span> <span class="tok-cls">TestEntityManager</span> em;
+
+    <span class="tok-ann">@Test</span>
+    <span class="tok-kw">void</span> <span class="tok-fn">findByCategoryAndStatus_filtersCorrectly</span>() {
+        em.<span class="tok-fn">persist</span>(<span class="tok-kw">new</span> <span class="tok-cls">Product</span>(<span class="tok-str">"A"</span>, <span class="tok-kw">new</span> <span class="tok-cls">BigDecimal</span>(<span class="tok-str">"10.00"</span>), <span class="tok-str">"sach"</span>));
+        <span class="tok-cls">Product</span> b = em.<span class="tok-fn">persist</span>(<span class="tok-kw">new</span> <span class="tok-cls">Product</span>(<span class="tok-str">"B"</span>, <span class="tok-kw">new</span> <span class="tok-cls">BigDecimal</span>(<span class="tok-str">"20.00"</span>), <span class="tok-str">"sach"</span>));
+        b.<span class="tok-fn">discontinue</span>();
+        em.<span class="tok-fn">persist</span>(<span class="tok-kw">new</span> <span class="tok-cls">Product</span>(<span class="tok-str">"C"</span>, <span class="tok-kw">new</span> <span class="tok-cls">BigDecimal</span>(<span class="tok-str">"30.00"</span>), <span class="tok-str">"do-choi"</span>));
+        em.<span class="tok-fn">flush</span>();                                           <span class="tok-com">// đẩy xuống DB để truy vấn thấy</span>
+
+        <span class="tok-cls">List</span>&lt;<span class="tok-cls">Product</span>&gt; r = repo.<span class="tok-fn">findByCategoryAndStatus</span>(<span class="tok-str">"sach"</span>, <span class="tok-cls">ProductStatus</span>.<span class="tok-cls">ACTIVE</span>);
+
+        <span class="tok-fn">assertThat</span>(r).<span class="tok-fn">extracting</span>(<span class="tok-cls">Product</span>::getName).<span class="tok-fn">containsExactly</span>(<span class="tok-str">"A"</span>);
+    }
+
+    <span class="tok-ann">@Test</span>
+    <span class="tok-kw">void</span> <span class="tok-fn">uniqueSku_isEnforcedByDatabase</span>() {
+        repo.<span class="tok-fn">saveAndFlush</span>(<span class="tok-fn">productWithSku</span>(<span class="tok-str">"SKU-1"</span>));
+        <span class="tok-fn">assertThatThrownBy</span>(() -&gt; repo.<span class="tok-fn">saveAndFlush</span>(<span class="tok-fn">productWithSku</span>(<span class="tok-str">"SKU-1"</span>)))
+                .<span class="tok-fn">isInstanceOf</span>(<span class="tok-cls">DataIntegrityViolationException</span>.<span class="tok-kw">class</span>);       <span class="tok-com">// ràng buộc UNIQUE do Flyway tạo</span>
+    }
+}</code></pre>
+        </div>
+        <p>Vì Flyway chạy trên container, test này đồng thời <strong>kiểm chứng migration</strong> khớp entity (<code>ddl-auto: validate</code>). Một lợi ích lớn: schema sai là test đỏ <strong>ngay</strong>, không đợi deploy.</p>
+
+        <h3 id="n-plus-1-test">4.1. Chốt chặn N+1 bằng test</h3>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>Đếm số câu SQL</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Test</span>
+<span class="tok-kw">void</span> <span class="tok-fn">listOrders_doesNotCauseNPlusOne</span>() {
+    <span class="tok-com">// tạo 10 đơn, mỗi đơn 3 dòng …</span>
+    <span class="tok-cls">Statistics</span> stats = em.<span class="tok-fn">getEntityManager</span>().<span class="tok-fn">getEntityManagerFactory</span>()
+            .<span class="tok-fn">unwrap</span>(<span class="tok-cls">SessionFactory</span>.<span class="tok-kw">class</span>).<span class="tok-fn">getStatistics</span>();
+    stats.<span class="tok-fn">setStatisticsEnabled</span>(<span class="tok-kw">true</span>);
+    stats.<span class="tok-fn">clear</span>();
+
+    orderService.<span class="tok-fn">listRows</span>();                                <span class="tok-com">// use case cần kiểm</span>
+
+    <span class="tok-fn">assertThat</span>(stats.<span class="tok-fn">getPrepareStatementCount</span>()).<span class="tok-fn">isLessThanOrEqualTo</span>(<span class="tok-num">2</span>);   <span class="tok-com">// 1 truy vấn (+1 dự phòng), không phải 1+10</span>
+}
+<span class="tok-com">// (cần: spring.jpa.properties.hibernate.generate_statistics=true trong cấu hình test, hoặc dùng datasource-assert)</span></code></pre>
+        </div>
+
+        <h2 id="springboottest">5. <code>@SpringBootTest</code> — kiểm thử tích hợp</h2>
+
+        <p>Khởi động <strong>toàn bộ</strong> context (có thể cả server thật trên cổng ngẫu nhiên). Dùng ít, cho các <strong>luồng quan trọng</strong> cần chứng minh các lớp ghép đúng: đăng ký → đăng nhập → gọi API có token → xem dữ liệu.</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>AuthFlowIT.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@SpringBootTest</span>(webEnvironment = <span class="tok-cls">SpringBootTest</span>.<span class="tok-cls">WebEnvironment</span>.<span class="tok-cls">RANDOM_PORT</span>)
+<span class="tok-ann">@Testcontainers</span>
+<span class="tok-kw">class</span> <span class="tok-cls">AuthFlowIT</span> {
+
+    <span class="tok-ann">@Container</span> <span class="tok-ann">@ServiceConnection</span>
+    <span class="tok-kw">static</span> <span class="tok-cls">PostgreSQLContainer</span>&lt;?&gt; postgres = <span class="tok-kw">new</span> <span class="tok-cls">PostgreSQLContainer</span>&lt;&gt;(<span class="tok-str">"postgres:16-alpine"</span>);
+
+    <span class="tok-ann">@Autowired</span> <span class="tok-cls">TestRestTemplate</span> rest;
+
+    <span class="tok-ann">@Test</span>
+    <span class="tok-kw">void</span> <span class="tok-fn">register_login_thenCallProtectedEndpoint</span>() {
+        <span class="tok-com">// 1. đăng ký</span>
+        <span class="tok-kw">var</span> reg = rest.<span class="tok-fn">postForEntity</span>(<span class="tok-str">"/api/auth/register"</span>,
+                <span class="tok-kw">new</span> <span class="tok-cls">RegisterRequest</span>(<span class="tok-str">"an@example.com"</span>, <span class="tok-str">"Matkhau123"</span>), <span class="tok-cls">Void</span>.<span class="tok-kw">class</span>);
+        <span class="tok-fn">assertThat</span>(reg.<span class="tok-fn">getStatusCode</span>()).<span class="tok-fn">isEqualTo</span>(<span class="tok-cls">HttpStatus</span>.<span class="tok-cls">CREATED</span>);
+
+        <span class="tok-com">// 2. đăng nhập → token</span>
+        <span class="tok-kw">var</span> login = rest.<span class="tok-fn">postForEntity</span>(<span class="tok-str">"/api/auth/login"</span>,
+                <span class="tok-kw">new</span> <span class="tok-cls">LoginRequest</span>(<span class="tok-str">"an@example.com"</span>, <span class="tok-str">"Matkhau123"</span>), <span class="tok-cls">TokenResponse</span>.<span class="tok-kw">class</span>);
+        <span class="tok-fn">assertThat</span>(login.<span class="tok-fn">getStatusCode</span>()).<span class="tok-fn">isEqualTo</span>(<span class="tok-cls">HttpStatus</span>.<span class="tok-cls">OK</span>);
+        <span class="tok-cls">String</span> token = login.<span class="tok-fn">getBody</span>().<span class="tok-fn">accessToken</span>();
+
+        <span class="tok-com">// 3. gọi endpoint có bảo vệ</span>
+        <span class="tok-cls">HttpHeaders</span> h = <span class="tok-kw">new</span> <span class="tok-cls">HttpHeaders</span>(); h.<span class="tok-fn">setBearerAuth</span>(token);
+        <span class="tok-kw">var</span> me = rest.<span class="tok-fn">exchange</span>(<span class="tok-str">"/api/me"</span>, <span class="tok-cls">HttpMethod</span>.<span class="tok-cls">GET</span>, <span class="tok-kw">new</span> <span class="tok-cls">HttpEntity</span>&lt;&gt;(h), <span class="tok-cls">Map</span>.<span class="tok-kw">class</span>);
+        <span class="tok-fn">assertThat</span>(me.<span class="tok-fn">getStatusCode</span>()).<span class="tok-fn">isEqualTo</span>(<span class="tok-cls">HttpStatus</span>.<span class="tok-cls">OK</span>);
+        <span class="tok-fn">assertThat</span>(me.<span class="tok-fn">getBody</span>()).<span class="tok-fn">containsEntry</span>(<span class="tok-str">"username"</span>, <span class="tok-str">"an@example.com"</span>);
+
+        <span class="tok-com">// 4. không token → 401</span>
+        <span class="tok-fn">assertThat</span>(rest.<span class="tok-fn">getForEntity</span>(<span class="tok-str">"/api/me"</span>, <span class="tok-cls">String</span>.<span class="tok-kw">class</span>).<span class="tok-fn">getStatusCode</span>()).<span class="tok-fn">isEqualTo</span>(<span class="tok-cls">HttpStatus</span>.<span class="tok-cls">UNAUTHORIZED</span>);
+    }
+}</code></pre>
+        </div>
+
+        <h3 id="toi-uu-context">5.1. Giữ test nhanh</h3>
+
+        <ul>
+          <li><strong>Spring cache ApplicationContext</strong> theo cấu hình. Mỗi tổ hợp khác nhau (<code>@MockitoBean</code> khác, <code>@TestPropertySource</code> khác, <code>@ActiveProfiles</code> khác) ⇒ <strong>một context mới</strong> (chậm). Gom test dùng cùng cấu hình; dùng chung một lớp cơ sở <code>AbstractIntegrationTest</code>.</li>
+          <li><strong>Container dùng chung</strong>: khai báo <code>static</code> trong lớp cơ sở (hoặc <code>@Testcontainers</code> + singleton pattern) để cả bộ test dùng <strong>một</strong> PostgreSQL thay vì khởi động mỗi lớp.</li>
+          <li>Tránh <code>@DirtiesContext</code> (huỷ context ⇒ dựng lại); dọn dữ liệu bằng cách khác.</li>
+          <li>Với <code>RANDOM_PORT</code>, <code>@Transactional</code> trên test <strong>không</strong> rollback (server chạy ở thread khác) — dọn bằng <code>@Sql</code>/xoá trong <code>@BeforeEach</code>.</li>
+        </ul>
+        <div class="code-wrap">
+          <div class="code-meta"><span>AbstractIntegrationTest.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@SpringBootTest</span>(webEnvironment = <span class="tok-cls">RANDOM_PORT</span>)
+<span class="tok-ann">@ActiveProfiles</span>(<span class="tok-str">"test"</span>)
+<span class="tok-kw">public</span> <span class="tok-kw">abstract</span> <span class="tok-kw">class</span> <span class="tok-cls">AbstractIntegrationTest</span> {
+
+    <span class="tok-ann">@ServiceConnection</span>
+    <span class="tok-kw">static</span> <span class="tok-kw">final</span> <span class="tok-cls">PostgreSQLContainer</span>&lt;?&gt; <span class="tok-cls">POSTGRES</span> = <span class="tok-kw">new</span> <span class="tok-cls">PostgreSQLContainer</span>&lt;&gt;(<span class="tok-str">"postgres:16-alpine"</span>).<span class="tok-fn">withReuse</span>(<span class="tok-kw">true</span>);
+
+    <span class="tok-kw">static</span> { <span class="tok-cls">POSTGRES</span>.<span class="tok-fn">start</span>(); }                          <span class="tok-com">// khởi động một lần cho cả JVM của bộ test</span>
+
+    <span class="tok-ann">@Autowired</span> <span class="tok-kw">protected</span> <span class="tok-cls">TestRestTemplate</span> rest;
+    <span class="tok-ann">@Autowired</span> <span class="tok-kw">protected</span> <span class="tok-cls">JdbcTemplate</span> jdbc;
+
+    <span class="tok-ann">@BeforeEach</span>
+    <span class="tok-kw">void</span> <span class="tok-fn">cleanDb</span>() {
+        jdbc.<span class="tok-fn">execute</span>(<span class="tok-str">"truncate table order_item, orders, products, app_users restart identity cascade"</span>);
+    }
+}</code></pre>
+        </div>
+
+        <h2 id="du-lieu-thoi-gian">6. Dữ liệu test và thời gian</h2>
+
+
+        <h3 id="builder">6.1. Dữ liệu: dùng builder, không copy-paste</h3>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>TestData.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-kw">public</span> <span class="tok-kw">final</span> <span class="tok-kw">class</span> <span class="tok-cls">TestData</span> {
+    <span class="tok-kw">public</span> <span class="tok-kw">static</span> <span class="tok-cls">Product</span>.<span class="tok-cls">Builder</span> <span class="tok-fn">product</span>() {                 <span class="tok-com">// mặc định hợp lệ; test chỉ ghi đè điều quan tâm</span>
+        <span class="tok-kw">return</span> <span class="tok-cls">Product</span>.<span class="tok-fn">builder</span>().<span class="tok-fn">name</span>(<span class="tok-str">"Java 21"</span>).<span class="tok-fn">price</span>(<span class="tok-kw">new</span> <span class="tok-cls">BigDecimal</span>(<span class="tok-str">"99.00"</span>)).<span class="tok-fn">category</span>(<span class="tok-str">"sach"</span>);
+    }
+}
+<span class="tok-com">// Trong test:  var banned = TestData.product().status(DISCONTINUED).build();   // nhìn là biết test quan tâm đến cái gì</span></code></pre>
+        </div>
+        <p>Mỗi test <strong>tự tạo dữ liệu nó cần</strong> và <strong>độc lập thứ tự</strong> với test khác. Dữ liệu nền dùng chung do một script lớn nạp sẵn là nguồn gốc của test "lúc xanh lúc đỏ" (flaky). Nếu cần nhiều dòng, dùng <code>@Sql("/sql/orders.sql")</code> đặt ngay trên test để người đọc thấy nguồn dữ liệu.</p>
+
+        <h3 id="clock">6.2. Thời gian: tiêm <code>Clock</code></h3>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>Test với đồng hồ cố định</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-com">// Production: @Bean Clock clock() { return Clock.systemUTC(); }   (chương 2)</span>
+
+<span class="tok-ann">@TestConfiguration</span>
+<span class="tok-kw">class</span> <span class="tok-cls">FixedClockConfig</span> {
+    <span class="tok-ann">@Bean</span> <span class="tok-ann">@Primary</span>
+    <span class="tok-cls">Clock</span> <span class="tok-fn">fixedClock</span>() { <span class="tok-kw">return</span> <span class="tok-cls">Clock</span>.<span class="tok-fn">fixed</span>(<span class="tok-cls">Instant</span>.<span class="tok-fn">parse</span>(<span class="tok-str">"2025-03-01T08:00:00Z"</span>), <span class="tok-cls">ZoneOffset</span>.<span class="tok-cls">UTC</span>); }
+}
+
+<span class="tok-ann">@Test</span>
+<span class="tok-kw">void</span> <span class="tok-fn">accessToken_expiresIn15Minutes</span>() {
+    <span class="tok-cls">String</span> token = tokenService.<span class="tok-fn">issueAccessToken</span>(auth);
+    <span class="tok-cls">Jwt</span> jwt = decoder.<span class="tok-fn">decode</span>(token);
+    <span class="tok-fn">assertThat</span>(jwt.<span class="tok-fn">getExpiresAt</span>()).<span class="tok-fn">isEqualTo</span>(<span class="tok-cls">Instant</span>.<span class="tok-fn">parse</span>(<span class="tok-str">"2025-03-01T08:15:00Z"</span>));    <span class="tok-com">// chính xác tuyệt đối</span>
+}</code></pre>
+        </div>
+        <div class="callout callout-warning">
+          <div class="callout-label">⚠️ Cấm <code>Thread.sleep</code> và <code>Instant.now()</code> rải rác</div>
+          <p>Test phụ thuộc đồng hồ thật hoặc <code>sleep(2000)</code> để "đợi hết hạn" vừa chậm vừa flaky. Tiêm <code>Clock</code> (production code) rồi cố định/tiến thời gian trong test; với bất đồng bộ dùng <strong>Awaitility</strong> (<code>await().atMost(5, SECONDS).untilAsserted(...)</code>).</p>
+        </div>
+
+        <h2 id="http-ngoai">7. Gọi dịch vụ bên ngoài trong test</h2>
+
+        <p>Test <strong>không bao giờ</strong> gọi API thật (chậm, tốn tiền, không ổn định, có thể gây tác dụng phụ). Hai cách:</p>
+        <ul>
+          <li>**<code>@RestClientTest</code>** (slice) + <code>MockRestServiceServer</code>: kiểm tra client HTTP của bạn gửi đúng request và xử lý đúng phản hồi mẫu.</li>
+          <li><strong>WireMock</strong> (hoặc <code>MockWebServer</code>): dựng server giả thật sự lắng nghe cổng, trả phản hồi bạn dặn — kể cả lỗi 500, timeout, JSON sai — để kiểm thử <strong>retry/circuit breaker</strong> (chương 13).</li>
+        </ul>
+        <div class="code-wrap">
+          <div class="code-meta"><span>WireMock</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Test</span>
+<span class="tok-kw">void</span> <span class="tok-fn">paymentClient_retriesOn503</span>() {
+    wiremock.<span class="tok-fn">stubFor</span>(<span class="tok-fn">post</span>(<span class="tok-str">"/charge"</span>).<span class="tok-fn">inScenario</span>(<span class="tok-str">"flaky"</span>).<span class="tok-fn">whenScenarioStateIs</span>(<span class="tok-cls">STARTED</span>)
+            .<span class="tok-fn">willReturn</span>(<span class="tok-fn">serviceUnavailable</span>()).<span class="tok-fn">willSetStateTo</span>(<span class="tok-str">"recovered"</span>));
+    wiremock.<span class="tok-fn">stubFor</span>(<span class="tok-fn">post</span>(<span class="tok-str">"/charge"</span>).<span class="tok-fn">inScenario</span>(<span class="tok-str">"flaky"</span>).<span class="tok-fn">whenScenarioStateIs</span>(<span class="tok-str">"recovered"</span>)
+            .<span class="tok-fn">willReturn</span>(<span class="tok-fn">okJson</span>(<span class="tok-str">"{\"status\":\"OK\"}"</span>)));
+
+    <span class="tok-cls">PaymentResult</span> r = client.<span class="tok-fn">charge</span>(<span class="tok-kw">new</span> <span class="tok-cls">ChargeRequest</span>(<span class="tok-str">"order-1"</span>, <span class="tok-num">1000</span>));
+
+    <span class="tok-fn">assertThat</span>(r.<span class="tok-fn">status</span>()).<span class="tok-fn">isEqualTo</span>(<span class="tok-str">"OK"</span>);
+    wiremock.<span class="tok-fn">verify</span>(<span class="tok-num">2</span>, <span class="tok-fn">postRequestedFor</span>(<span class="tok-fn">urlEqualTo</span>(<span class="tok-str">"/charge"</span>)));          <span class="tok-com">// lần 1 lỗi, lần 2 thành công</span>
+}</code></pre>
+        </div>
+
+        <h2 id="chat-luong">8. Chất lượng của chính bộ test</h2>
+
+        <ul>
+          <li><strong>Đặt tên theo hành vi</strong>: <code>place_throwsWhenProductDiscontinued</code>, không phải <code>test1</code>. Đọc tên test phải hiểu yêu cầu.</li>
+          <li><strong>Given–When–Then / Arrange–Act–Assert</strong>: ba phần rõ ràng; mỗi test kiểm <strong>một khái niệm</strong>.</li>
+          <li><strong>Test hành vi, không test cài đặt</strong>: refactor mà hành vi không đổi ⇒ test không được đỏ.</li>
+          <li><strong>Độ phủ (JaCoCo)</strong> là <em>chỉ báo</em>, không phải mục tiêu: 100% dòng vẫn có thể không kiểm gì (không <code>assert</code>). Dùng <strong>mutation testing</strong> (PIT) để kiểm chất lượng assert (Java chương 14).</li>
+          <li><strong>Chạy trong CI</strong> mỗi commit: unit + slice nhanh trước; integration/Testcontainers sau; test đỏ chặn merge.</li>
+          <li><strong>Test flaky phải sửa hoặc xoá</strong> — một test lúc đỏ lúc xanh làm cả đội ngừng tin bộ test.</li>
+        </ul>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Phân tách chạy</th><th>Maven</th></tr></thead>
+            <tbody>
+              <tr><td>Unit + slice (<code>*Test</code>)</td><td><code>./mvnw test</code> (Surefire)</td></tr>
+              <tr><td>Integration (<code>*IT</code>)</td><td><code>./mvnw verify</code> (Failsafe) — chạy riêng, có thể song song với build khác</td></tr>
+              <tr><td>Báo cáo độ phủ</td><td>JaCoCo plugin → <code>target/site/jacoco/index.html</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="cheat-sheet">9. Cheat sheet chương 11</h2>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Cần kiểm gì</th><th>Dùng</th></tr></thead>
+            <tbody>
+              <tr><td>Logic nghiệp vụ trong service</td><td>Unit: <code>@ExtendWith(MockitoExtension)</code> + <code>@Mock</code>/<code>@InjectMocks</code> + AssertJ</td></tr>
+              <tr><td>URL, validation, JSON, mã lỗi, phân quyền theo URL</td><td><code>@WebMvcTest</code> + <code>MockMvc</code> + <code>@MockitoBean</code></td></tr>
+              <tr><td>Đóng vai người dùng/JWT</td><td><code>@WithMockUser</code>, <code>jwt()</code> (<code>spring-security-test</code>)</td></tr>
+              <tr><td>Truy vấn, ràng buộc, migration, N+1</td><td><code>@DataJpaTest</code> + Testcontainers <code>@ServiceConnection</code></td></tr>
+              <tr><td>Luồng xuyên nhiều lớp</td><td><code>@SpringBootTest(RANDOM_PORT)</code> + <code>TestRestTemplate</code> + container</td></tr>
+              <tr><td>Gọi API ngoài</td><td><code>@RestClientTest</code> / WireMock — không gọi thật</td></tr>
+              <tr><td>Thời gian</td><td>Tiêm <code>Clock</code>; <code>Clock.fixed(...)</code> trong test; Awaitility cho async</td></tr>
+              <tr><td>Giữ nhanh</td><td>Chia sẻ context &amp; container; tránh <code>@DirtiesContext</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="bai-tap">Bài tập</h2>
+
+        <div class="exercises">
+
+          <div class="exercise">
+            <h4>Unit test service với Mockito</h4>
+            <div class="exercise-body">
+              <p>Viết <code>TransferServiceTest</code> cho <code>chuyen(tu, den, soTien)</code> gồm các trường hợp:</p>
+              <ul>
+                <li>Thành công: số dư hai tài khoản đúng.</li>
+                <li>Không đủ số dư: ném <code>BusinessRuleException</code> và <strong>không</strong> lưu gì.</li>
+                <li>Tài khoản đích không tồn tại: <code>NotFoundException</code>.</li>
+                <li>Dùng <code>@ParameterizedTest</code> cho các số tiền biên: 0, âm, bằng đúng số dư.</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Dùng đối tượng <code>TaiKhoan</code> thật (không mock entity). <code>verify(repo, never()).save(any())</code> cho nhánh lỗi. Số tiền ≤ 0 nên bị chặn ở validation hoặc ở entity — test chỉ ra <em>ai</em> chịu trách nhiệm.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4><code>@WebMvcTest</code> cho API sản phẩm</h4>
+            <div class="exercise-body">
+              <p>Viết test cho <code>POST /api/products</code> bao gồm: tạo thành công (201 + <code>Location</code>), body sai (400 + <code>errors</code>), chưa đăng nhập (401), không đủ quyền (403).</p>
+              <ul>
+                <li>Kiểm tra <code>Content-Type: application/problem+json</code> cho lỗi.</li>
+                <li><code>verifyNoInteractions(service)</code> khi validation thất bại.</li>
+                <li>Bật <code>spring.mvc.problemdetails.enabled</code> — có ảnh hưởng test không?</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p><code>@Import(SecurityConfig.class)</code> + <code>@MockitoBean JwtDecoder</code>; dùng <code>.with(csrf())</code> nếu CSRF còn bật (với API stateless đã tắt). Thiếu <code>@Import</code> ⇒ filter bảo mật mặc định của Boot áp dụng và kết quả khác production.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Repository với Testcontainers</h4>
+            <div class="exercise-body">
+              <p>Dựng <code>@DataJpaTest</code> với PostgreSQL thật cho <code>OrderRepository</code>.</p>
+              <ul>
+                <li>Kiểm tra <code>findWithItemsById</code> nạp đủ <code>items</code> mà <strong>không</strong> có <code>LazyInitializationException</code> khi truy cập ngoài transaction.</li>
+                <li>Viết test đếm câu SQL cho <code>findRows()</code> (không N+1).</li>
+                <li>Thử đổi sang H2 — có test nào xanh sai (hoặc đỏ sai) vì khác PostgreSQL không?</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Test ngoài transaction: <code>@Transactional(propagation = NOT_SUPPORTED)</code> hoặc gọi qua service. Khác biệt thường gặp: <code>bigint generated by default as identity</code>, <code>jsonb</code>, <code>ilike</code>, hành vi <code>FOR UPDATE</code>, phân biệt hoa thường của tên.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Bắt lỗi IDOR bằng test</h4>
+            <div class="exercise-body">
+              <p>Viết integration test với hai người dùng A và B. A tạo một đơn hàng.</p>
+              <ul>
+                <li>B gọi <code>GET /api/orders/{idCuaA}</code> ⇒ phải nhận 404 (hoặc 403 — theo quy ước đội).</li>
+                <li>Cố ý xoá kiểm tra sở hữu khỏi service ⇒ test phải <strong>đỏ</strong> (đó là mục đích).</li>
+                <li>Bổ sung test cho <code>PUT</code>/<code>DELETE</code> cùng tài nguyên.</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Dùng <code>TestRestTemplate</code> kèm token thật của B qua <code>login</code>. Một test phân quyền chỉ có giá trị nếu bạn đã thấy nó đỏ khi cố tình làm hỏng code — luôn kiểm tra chiều đó.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Thời gian và refresh token</h4>
+            <div class="exercise-body">
+              <p>Dùng <code>Clock</code> cố định để kiểm thử <code>RefreshTokenService.rotate</code>:</p>
+              <ul>
+                <li>Token còn hạn ⇒ cặp mới; hết hạn (tiến đồng hồ 15 ngày) ⇒ <code>InvalidTokenException</code>.</li>
+                <li>Dùng lại token cũ ⇒ <code>TokenReuseException</code> <strong>và</strong> toàn bộ family bị <code>revoked</code> (kiểm bằng truy vấn DB).</li>
+                <li>Không dùng <code>Thread.sleep</code> ở bất cứ đâu.</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Dùng <code>MutableClock</code> đơn giản (lớp test tự viết, <code>advance(Duration)</code>) để tiến thời gian giữa các bước. Kiểm tra <em>trạng thái DB sau ngoại lệ</em> — chính là chỗ <code>noRollbackFor</code> (chương 10) thể hiện.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+        </div>
+
+        <h2 id="quiz">Quiz</h2>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q1</span>
+            <div class="quiz-q-text"><p>Kim tự tháp test là gì? Vì sao không nên dùng <code>@SpringBootTest</code> cho mọi test?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Nhiều test <strong>nhanh</strong> ở đáy (unit), vừa ở giữa (slice), <strong>ít</strong> test chậm ở đỉnh (integration/E2E). <code>@SpringBootTest</code> dựng cả ứng dụng (chục giây, thường cần DB) — dùng cho mọi test sẽ cho bộ test chậm, mong manh, và khó biết lỗi nằm ở đâu. Mỗi bug nên bị bắt ở tầng thấp nhất có thể.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q2</span>
+            <div class="quiz-q-text"><p><code>@WebMvcTest</code> dựng gì và không dựng gì?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Dựng tầng MVC: <code>DispatcherServlet</code>, controller được chỉ định, <code>@ControllerAdvice</code>, filter, converter/JSON. <strong>Không</strong> dựng <code>@Service</code>, <code>@Repository</code>, <code>@Configuration</code> thông thường ⇒ phải cung cấp mock (<code>@MockitoBean</code>) và <code>@Import</code> cấu hình bảo mật nếu cần.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q3</span>
+            <div class="quiz-q-text"><p>Vì sao nên dùng Testcontainers với PostgreSQL thay vì H2?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>H2 không giống PostgreSQL: khác kiểu dữ liệu, hàm, SQL native, hành vi khoá và migration ⇒ test xanh nhưng production lỗi. Testcontainers chạy <strong>đúng CSDL production</strong> trong Docker, cô lập và tái lập được; <code>@ServiceConnection</code> (Boot 3.1+) tự nối ứng dụng tới container.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q4</span>
+            <div class="quiz-q-text"><p>Khi nào nên và không nên mock?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Mock phụ thuộc <strong>chậm/ngoài/phi tất định</strong> (DB, HTTP, email, thời gian) hoặc cần ép lỗi. <strong>Không</strong> mock value object, DTO, entity thuần, hay chính lớp đang test. Tránh <code>verify</code> quá chi tiết làm test dính cài đặt — ưu tiên kiểm kết quả quan sát được.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q5</span>
+            <div class="quiz-q-text"><p>Làm sao test code phụ thuộc thời gian mà không <code>Thread.sleep</code>?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Tiêm **<code>Clock</code>** vào code production (<code>clock.instant()</code> thay vì <code>Instant.now()</code>); trong test dùng <code>Clock.fixed(...)</code> hoặc đồng hồ tiến được. Với bất đồng bộ dùng <strong>Awaitility</strong>. Cách này nhanh, chính xác và không flaky.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q6</span>
+            <div class="quiz-q-text"><p>Vì sao một test phân quyền chỉ đáng tin sau khi bạn đã thấy nó đỏ?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Test luôn xanh có thể vì nó không kiểm gì (sai URL, thiếu assert, sai cấu hình security). Cố ý làm hỏng code (bỏ kiểm tra sở hữu) và xác nhận test <strong>đỏ</strong> để chắc rằng nó thật sự bảo vệ thứ cần bảo vệ — nguyên tắc cũng là ý tưởng của mutation testing.</p>
+            </div>
+          </details>
+        </div>
+
+        <h2 id="tong-ket">Tổng kết</h2>
+
+        <p>Sau chương 11, bạn đã nắm:</p>
+        <ul>
+          <li><strong>Kim tự tháp</strong>: unit (Mockito, không Spring) → slice (<code>@WebMvcTest</code>, <code>@DataJpaTest</code>) → ít integration (<code>@SpringBootTest</code>).</li>
+          <li>Constructor injection ⇒ unit test <code>new Service(mock…)</code> không cần Spring; mock <em>biên chậm/ngoài</em>, không mock giá trị/chính lớp.</li>
+          <li>**<code>@WebMvcTest</code> + <code>MockMvc</code>** kiểm URL, validation, JSON, <code>ProblemDetail</code>, phân quyền; <code>@WithMockUser</code>/<code>jwt()</code> đóng vai người dùng.</li>
+          <li>**Testcontainers + <code>@ServiceConnection</code>** cho CSDL thật; test cả migration, ràng buộc, N+1.</li>
+          <li>Chia sẻ <strong>context</strong> và <strong>container</strong>, dọn dữ liệu tường minh; tiêm **<code>Clock</code>**; Awaitility thay <code>sleep</code>.</li>
+          <li>Test hành vi, đặt tên rõ, không flaky; độ phủ là chỉ báo — kiểm chất lượng assert bằng mutation testing.</li>
+        </ul>
+
+        <h2 id="ket-noi">Kết nối</h2>
+        <ul>
+          <li><strong>Chương 2</strong> — DI/constructor injection là điều kiện để unit test không cần Spring; <code>@MockitoBean</code> thay bean.</li>
+          <li><strong>Chương 5</strong> — test <code>ProblemDetail</code>, <code>errors</code> từng trường. <strong>Chương 9-10</strong> — test 401/403, JWT, rotation, IDOR.</li>
+          <li><strong>Chương 6-7</strong> — test truy vấn, Flyway migration, N+1, khoá lạc quan trên PostgreSQL thật.</li>
+          <li><strong>Chương 12-13</strong> — test Redis/Kafka bằng Testcontainers; WireMock cho retry/circuit breaker.</li>
+          <li><strong>Chương 14</strong> — chạy bộ test trong CI trước khi build image.</li>
+          <li><strong>Java chương 14 (JUnit, Mockito)</strong> — nền tảng công cụ; <strong>DevOps chương 4</strong> — CI/CD chạy test tự động.</li>
+        </ul>
+
+        <nav class="chapter-nav">
+          <a href="chuong10.html" class="prev">
+            <div class="dir">← Chương 10</div>
+            <div class="label">JWT &amp;amp; OAuth2</div>
+          </a>
+          <a href="chuong12.html" class="next">
+            <div class="dir">Chương 12 →</div>
+            <div class="label">Cache, Messaging &amp;amp; Async</div>
+          </a>
+        </nav>
+
+      </main>
+
+      <aside class="toc">
+        <div class="toc-label">Trong chương này</div>
+        <ul>
+          <li><a href="#kim-tu-thap">1. Chọn đúng loại test</a></li>
+          <li><a href="#unit">2. Unit test — không cần Spring</a></li>
+          <li class="level-3"><a href="#mock-hay-khong">2.1. Khi nào nên (không nên) mock</a></li>
+          <li><a href="#webmvc">3. <code>@WebMvcTest</code> — kiểm thử controller</a></li>
+          <li class="level-3"><a href="#security-test">3.1. Kiểm thử bảo mật</a></li>
+          <li><a href="#datajpa">4. <code>@DataJpaTest</code> + Testcontainers</a></li>
+          <li class="level-3"><a href="#n-plus-1-test">4.1. Chốt chặn N+1 bằng test</a></li>
+          <li><a href="#springboottest">5. <code>@SpringBootTest</code> — kiểm thử tích hợp</a></li>
+          <li class="level-3"><a href="#toi-uu-context">5.1. Giữ test nhanh</a></li>
+          <li><a href="#du-lieu-thoi-gian">6. Dữ liệu test và thời gian</a></li>
+          <li class="level-3"><a href="#builder">6.1. Dữ liệu: dùng builder, không copy-paste</a></li>
+          <li class="level-3"><a href="#clock">6.2. Thời gian: tiêm <code>Clock</code></a></li>
+          <li><a href="#http-ngoai">7. Gọi dịch vụ bên ngoài trong test</a></li>
+          <li><a href="#chat-luong">8. Chất lượng của chính bộ test</a></li>
+          <li><a href="#cheat-sheet">9. Cheat sheet chương 11</a></li>
+          <li><a href="#bai-tap">Bài tập</a></li>
+          <li><a href="#quiz">Quiz</a></li>
+          <li><a href="#tong-ket">Tổng kết</a></li>
+          <li><a href="#ket-noi">Kết nối</a></li>
+        </ul>
+      </aside>
+
+    </div>
+  </div>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p>
+        Chương 11 — Kiểm thử · Spring Boot sub-pillar · Pillar 9 IT Basic<br/>
+        <a href="chuong10.html">← Chương 10</a> · <a href="../index.html">Spring Boot TOC</a> · <a href="chuong12.html">Chương 12 →</a>
+      </p>
+    </div>
+  </footer>
+
+  <script src="../../shared/js/chapter.js"></script>
+</body>
+</html>

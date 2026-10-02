@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chương 13 — Microservices &amp; Spring Cloud — khi một ứng dụng không đủ · Spring Boot Sub-pillar</title>
+  <meta name="description" content="Monolith, modular monolith và microservices; phân rã theo bounded context; giao tiếp đồng bộ với RestClient/HTTP interface; timeout, retry, circuit breaker với Resilience4j; API Gateway; Saga; observability với Micrometer, OpenTelemetry, Prometheus; virtual threads." />
+  <meta name="theme-color" content="#4a9a28" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Bitter:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="../../shared/css/base.css">
+  <link rel="stylesheet" href="../css/theme.css">
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="container">
+      <a class="site-logo" href="../../../index.html">
+        <span class="mark mark-spring">Sb</span>
+        Spring Boot · IT Basic
+      </a>
+      <nav>
+        <ul class="site-nav">
+          <li><a href="../../../index.html">IT Basic</a></li>
+          <li><a href="../../index.html">Pillar 9</a></li>
+          <li><a href="../../Java/index.html">Java</a></li>
+          <li><a href="../index.html" class="active">Spring Boot</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <div class="container">
+    <header class="chapter-header">
+      <div class="breadcrumb">
+        <a href="../../../index.html">IT Basic</a><span class="sep">/</span>
+        <a href="../../index.html">Pillar 9</a><span class="sep">/</span>
+        <a href="../index.html">Spring Boot</a><span class="sep">/</span>
+        <span>Chương 13</span>
+      </div>
+      <div class="chapter-num">Chương 13 · Microservices</div>
+      <h1 style="font-size: 2.6rem; margin: 0 0 12px; color: var(--ink);">
+        Microservices &amp; Spring Cloud — khi một ứng dụng không đủ
+      </h1>
+      <p class="lead">
+        Microservices là kiến trúc <strong>bị đánh giá quá cao</strong>: nó giải quyết vấn đề <em>tổ chức và mở rộng</em> của các hệ thống rất lớn, nhưng đổi lại bạn có một <strong>hệ phân tán</strong> — mạng lỗi, độ trễ, dữ liệu rải rác, debug qua nhiều dịch vụ. Chương này không nhằm "cổ vũ" microservices mà để bạn <strong>biết khi nào cần</strong>, và nếu cần thì <strong>làm đúng</strong>: chia theo ranh giới nghiệp vụ, gọi nhau có timeout + circuit breaker, chịu mất đồng bộ bằng Saga, và nhìn thấy mọi thứ bằng metrics/trace.
+      </p>
+      <div class="chapter-meta">
+        <span class="item"><strong>Bài tập:</strong> 5</span>
+        <span class="item"><strong>Quiz:</strong> 6</span>
+        <span class="item"><strong>Prerequisites:</strong> Chương 1-12</span>
+      </div>
+    </header>
+
+    <div class="layout">
+
+      <main class="prose">
+
+        <div class="callout callout-goal">
+          <div class="callout-label">🎯 Mục tiêu chương</div>
+          <ul>
+            <li>Phân tích <strong>khi nào</strong> nên (và không nên) dùng microservices; biết lựa chọn <strong>modular monolith</strong>.</li>
+            <li>Phân rã theo <strong>bounded context</strong>; nguyên tắc <strong>mỗi dịch vụ một CSDL</strong>.</li>
+            <li>Gọi dịch vụ khác bằng **<code>RestClient</code><strong> và </strong>HTTP Interface<strong> với </strong>timeout** đúng.</li>
+            <li>Áp dụng <strong>retry, circuit breaker, bulkhead, rate limiter</strong> bằng <strong>Resilience4j</strong>.</li>
+            <li>Hiểu vai trò <strong>API Gateway</strong>, discovery và cấu hình tập trung — và khi nào Kubernetes đã làm hộ.</li>
+            <li>Xử lý nhất quán dữ liệu xuyên dịch vụ bằng <strong>Saga</strong> (choreography/orchestration).</li>
+            <li>Quan sát hệ thống bằng <strong>metrics, log có cấu trúc, distributed tracing</strong> (Micrometer + OpenTelemetry).</li>
+            <li>Biết <strong>virtual threads</strong> thay đổi bài toán hiệu năng I/O ra sao.</li>
+          </ul>
+        </div>
+
+        <h2 id="khi-nao">1. Monolith, modular monolith hay microservices?</h2>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th></th><th>Monolith (một khối)</th><th>Modular monolith</th><th>Microservices</th></tr></thead>
+            <tbody>
+              <tr><td>Đơn vị triển khai</td><td>1</td><td>1</td><td>Nhiều (mỗi dịch vụ một)</td></tr>
+              <tr><td>Ranh giới giữa các phần</td><td>Mờ</td><td><strong>Rõ</strong> (module, <code>package-private</code>, ArchUnit — chương 8)</td><td>Rõ <strong>và</strong> bắt buộc qua mạng</td></tr>
+              <tr><td>Gọi nhau</td><td>Gọi hàm</td><td>Gọi hàm qua API module</td><td>HTTP/gRPC/queue — <strong>chậm, có thể lỗi</strong></td></tr>
+              <tr><td>Giao dịch</td><td>1 transaction</td><td>1 transaction</td><td><strong>Không có</strong> transaction chung ⇒ Saga</td></tr>
+              <tr><td>Triển khai/scale</td><td>Cả khối</td><td>Cả khối</td><td><strong>Độc lập từng dịch vụ</strong></td></tr>
+              <tr><td>Độ phức tạp vận hành</td><td>Thấp</td><td>Thấp</td><td><strong>Rất cao</strong>: CI/CD, giám sát, mạng, nhiều CSDL</td></tr>
+              <tr><td>Phù hợp</td><td>Khởi đầu, đội nhỏ</td><td><strong>Mặc định cho phần lớn dự án</strong></td><td>Đội lớn, miền nghiệp vụ lớn, nhu cầu scale/triển khai độc lập khác nhau</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="java-rule"><strong>Đừng bắt đầu bằng microservices.</strong> Bắt đầu bằng <strong>modular monolith</strong> (package-by-feature, ranh giới rõ — chương 8). Khi một module thật sự cần scale riêng, đội riêng, hoặc vòng đời triển khai riêng, <em>tách nó ra</em> — ranh giới đã sạch thì việc tách rẻ. Tách sớm khi chưa hiểu miền nghiệp vụ nghĩa là vẽ sai ranh giới rồi trả giá đắt (gọi chéo, đồng bộ dữ liệu).</div>
+        <div class="callout callout-warning">
+          <div class="callout-label">⚠️ Tám ngộ nhận về hệ phân tán (Fallacies of Distributed Computing)</div>
+          <p>Mạng đáng tin cậy · độ trễ bằng 0 · băng thông vô hạn · mạng an toàn · topology không đổi · có một quản trị viên · chi phí truyền = 0 · mạng đồng nhất. <strong>Cả tám đều sai</strong> — và microservices biến mỗi lời gọi hàm thành một lời gọi mạng chịu tất cả chúng.</p>
+        </div>
+        <p>Dấu hiệu <strong>nên</strong> cân nhắc tách: nhiều đội cùng sửa một repo giẫm chân nhau; một phần nhỏ chịu tải gấp 50 lần phần còn lại; một phần cần công nghệ/CSDL khác; thời gian build/test/triển khai cả khối quá lâu. Dấu hiệu <strong>không</strong> nên: đội &lt; 10 người, miền nghiệp vụ chưa ổn định, chưa có CI/CD &amp; giám sát tử tế.</p>
+
+        <h2 id="phan-ra">2. Phân rã theo bounded context</h2>
+
+        <p>Đừng chia theo <em>tầng kỹ thuật</em> (một dịch vụ "database", một dịch vụ "UI"). Chia theo <strong>bounded context</strong> (DDD): mỗi dịch vụ sở hữu <em>một năng lực nghiệp vụ</em>, có mô hình dữ liệu riêng. Cùng từ "Sản phẩm" nghĩa khác nhau ở các context: Catalog (mô tả, ảnh), Inventory (số tồn, kho), Pricing (giá, khuyến mãi), Order (bản chụp tên + giá tại lúc đặt).</p>
+        <div class="jvm-flow">
+          <div class="stages">
+            <div class="stage"><div class="stage-title">API Gateway</div><div class="stage-content">Cổng vào duy nhất: định tuyến, xác thực, giới hạn tốc độ</div></div>
+            <div class="stage blue"><div class="stage-title">Catalog</div><div class="stage-content">Sản phẩm, danh mục · <strong>DB riêng</strong></div></div>
+            <div class="stage"><div class="stage-title">Order</div><div class="stage-content">Đơn hàng · <strong>DB riêng</strong></div></div>
+            <div class="stage blue"><div class="stage-title">Inventory</div><div class="stage-content">Tồn kho · <strong>DB riêng</strong></div></div>
+            <div class="stage"><div class="stage-title">Payment</div><div class="stage-content">Thanh toán · <strong>DB riêng</strong></div></div>
+            <div class="stage blue"><div class="stage-title">Message broker</div><div class="stage-content">Kafka/RabbitMQ: sự kiện giữa dịch vụ</div></div>
+          </div>
+          <div class="caption">Mỗi dịch vụ sở hữu dữ liệu của nó; dịch vụ khác chỉ truy cập <strong>qua API hoặc sự kiện</strong> — không bao giờ qua CSDL.</div>
+        </div>
+        <div class="java-rule"><strong>Database per service.</strong> Hai dịch vụ dùng chung một CSDL/bảng ⇒ không còn là hai dịch vụ độc lập (đổi cột là vỡ cả hai, không triển khai riêng được) — bạn có một <em>monolith phân tán</em>, tệ nhất cả hai thế giới. Cần dữ liệu của dịch vụ khác? Gọi API của nó, hoặc <strong>giữ bản sao cục bộ</strong> cập nhật qua sự kiện.</div>
+
+        <h2 id="giao-tiep">3. Gọi dịch vụ khác</h2>
+
+
+        <h3 id="restclient">3.1. <code>RestClient</code> (Spring 6.1)</h3>
+
+        <p><code>RestClient</code> là client HTTP đồng bộ, API "fluent" hiện đại — thay <code>RestTemplate</code> (ở chế độ bảo trì) cho code mới. Quan trọng nhất: <strong>luôn đặt timeout</strong>; mặc định là <em>chờ vô hạn</em> — một dịch vụ chậm sẽ giữ thread của bạn cho đến khi cạn pool.</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>ClientConfig.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Configuration</span>
+<span class="tok-kw">class</span> <span class="tok-cls">InventoryClientConfig</span> {
+
+    <span class="tok-ann">@Bean</span>
+    <span class="tok-cls">RestClient</span> <span class="tok-fn">inventoryRestClient</span>(<span class="tok-cls">RestClient</span>.<span class="tok-cls">Builder</span> builder,
+                                   <span class="tok-ann">@Value</span>(<span class="tok-str">"${clients.inventory.base-url}"</span>) <span class="tok-cls">String</span> baseUrl) {
+        <span class="tok-kw">var</span> factory = <span class="tok-kw">new</span> <span class="tok-cls">JdkClientHttpRequestFactory</span>(<span class="tok-cls">HttpClient</span>.<span class="tok-fn">newBuilder</span>()
+                .<span class="tok-fn">connectTimeout</span>(<span class="tok-cls">Duration</span>.<span class="tok-fn">ofMillis</span>(<span class="tok-num">500</span>))                <span class="tok-com">// kết nối TCP</span>
+                .<span class="tok-fn">build</span>());
+        factory.<span class="tok-fn">setReadTimeout</span>(<span class="tok-cls">Duration</span>.<span class="tok-fn">ofSeconds</span>(<span class="tok-num">2</span>));                 <span class="tok-com">// đọc phản hồi</span>
+
+        <span class="tok-kw">return</span> builder.<span class="tok-fn">baseUrl</span>(baseUrl)
+                .<span class="tok-fn">requestFactory</span>(factory)
+                .<span class="tok-fn">defaultHeader</span>(<span class="tok-cls">HttpHeaders</span>.<span class="tok-cls">ACCEPT</span>, <span class="tok-cls">MediaType</span>.<span class="tok-cls">APPLICATION_JSON_VALUE</span>)
+                .<span class="tok-fn">defaultStatusHandler</span>(<span class="tok-cls">HttpStatusCode</span>::is5xxServerError,
+                        (req, res) -&gt; { <span class="tok-kw">throw</span> <span class="tok-kw">new</span> <span class="tok-cls">UpstreamUnavailableException</span>(<span class="tok-str">"inventory"</span>, res.<span class="tok-fn">getStatusCode</span>().<span class="tok-fn">value</span>()); })
+                .<span class="tok-fn">build</span>();
+    }
+}</code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Dùng</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Component</span>
+<span class="tok-kw">class</span> <span class="tok-cls">InventoryClient</span> {
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">RestClient</span> http;
+    <span class="tok-cls">InventoryClient</span>(<span class="tok-cls">RestClient</span> inventoryRestClient) { <span class="tok-kw">this</span>.http = inventoryRestClient; }
+
+    <span class="tok-cls">StockResponse</span> <span class="tok-fn">stockOf</span>(<span class="tok-kw">long</span> productId) {
+        <span class="tok-kw">return</span> http.<span class="tok-fn">get</span>().<span class="tok-fn">uri</span>(<span class="tok-str">"/api/stock/{id}"</span>, productId)
+                   .<span class="tok-fn">retrieve</span>()
+                   .<span class="tok-fn">body</span>(<span class="tok-cls">StockResponse</span>.<span class="tok-kw">class</span>);                         <span class="tok-com">// 4xx → HttpClientErrorException; 5xx → handler ở trên</span>
+    }
+
+    <span class="tok-kw">void</span> <span class="tok-fn">reserve</span>(<span class="tok-cls">ReserveRequest</span> req) {
+        http.<span class="tok-fn">post</span>().<span class="tok-fn">uri</span>(<span class="tok-str">"/api/stock/reserve"</span>)
+            .<span class="tok-fn">header</span>(<span class="tok-str">"Idempotency-Key"</span>, req.<span class="tok-fn">orderId</span>().<span class="tok-fn">toString</span>())       <span class="tok-com">// chương 8: thử lại an toàn</span>
+            .<span class="tok-fn">body</span>(req).<span class="tok-fn">retrieve</span>().<span class="tok-fn">toBodilessEntity</span>();
+    }
+}</code></pre>
+        </div>
+
+        <h3 id="http-interface">3.2. HTTP Interface — khai báo như Feign</h3>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>Khai báo client bằng interface</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-kw">interface</span> <span class="tok-cls">InventoryApi</span> {
+    <span class="tok-ann">@GetExchange</span>(<span class="tok-str">"/api/stock/{id}"</span>)
+    <span class="tok-cls">StockResponse</span> <span class="tok-fn">stockOf</span>(<span class="tok-ann">@PathVariable</span> <span class="tok-kw">long</span> id);
+
+    <span class="tok-ann">@PostExchange</span>(<span class="tok-str">"/api/stock/reserve"</span>)
+    <span class="tok-kw">void</span> <span class="tok-fn">reserve</span>(<span class="tok-ann">@RequestBody</span> <span class="tok-cls">ReserveRequest</span> req);
+}
+
+<span class="tok-ann">@Bean</span>
+<span class="tok-cls">InventoryApi</span> <span class="tok-fn">inventoryApi</span>(<span class="tok-cls">RestClient</span> inventoryRestClient) {
+    <span class="tok-kw">return</span> <span class="tok-cls">HttpServiceProxyFactory</span>.<span class="tok-fn">builderFor</span>(<span class="tok-cls">RestClientAdapter</span>.<span class="tok-fn">create</span>(inventoryRestClient))
+            .<span class="tok-fn">build</span>().<span class="tok-fn">createClient</span>(<span class="tok-cls">InventoryApi</span>.<span class="tok-kw">class</span>);                 <span class="tok-com">// Spring sinh cài đặt, như repository</span>
+}</code></pre>
+        </div>
+        <p>Đây là phiên bản có sẵn trong Spring Framework của ý tưởng <strong>OpenFeign</strong> (Spring Cloud). Mới nên dùng HTTP Interface; OpenFeign vẫn phổ biến trong dự án cũ.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Đồng bộ (REST/gRPC)</th><th>Bất đồng bộ (sự kiện qua broker)</th></tr></thead>
+            <tbody>
+              <tr><td>Cần <strong>kết quả ngay</strong> (kiểm tra tồn kho trước khi cho đặt)</td><td>Chỉ cần <strong>thông báo</strong> việc đã xảy ra (đơn đã đặt)</td></tr>
+              <tr><td>Gắn chặt về thời gian: gọi chết thì mình lỗi theo</td><td><strong>Tách rời</strong> về thời gian: broker đệm khi bên kia chết</td></tr>
+              <tr><td>Dễ hiểu, dễ debug</td><td>Khó theo dõi luồng; nhất quán cuối cùng</td></tr>
+              <tr><td>Trong chuỗi gọi dài, <strong>độ sẵn sàng nhân lên</strong>: 5 dịch vụ × 99,9% = 99,5%</td><td>Độ sẵn sàng của từng dịch vụ độc lập hơn</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout callout-tip">
+          <div class="callout-label">💡 Ưu tiên bất đồng bộ cho luồng ghi</div>
+          <p>Dịch vụ A gọi đồng bộ B, B gọi C, C gọi D ⇒ một chuỗi mong manh. Với <em>tác vụ ghi</em>, ưu tiên sự kiện (chương 12). Dùng đồng bộ cho <em>truy vấn đọc cần kết quả ngay</em> — và khi đó đặt timeout + circuit breaker (mục 4).</p>
+        </div>
+
+        <h2 id="resilience">4. Khả năng chịu lỗi: timeout, retry, circuit breaker</h2>
+
+        <p>Trong hệ phân tán, <strong>lỗi là chuyện bình thường</strong>. Một dịch vụ chậm nguy hiểm hơn một dịch vụ chết: nó giữ thread của người gọi, hàng đợi đầy, và <strong>lỗi lan truyền</strong> (<em>cascading failure</em>) lên cả chuỗi.</p>
+        <div class="jvm-flow">
+          <div class="stages">
+            <div class="stage"><div class="stage-title">1. Timeout</div><div class="stage-content">Không bao giờ chờ vô hạn — giải phóng thread</div></div>
+            <div class="stage blue"><div class="stage-title">2. Retry</div><div class="stage-content">Thử lại lỗi <strong>tạm thời</strong>, có backoff + jitter, <strong>chỉ với thao tác idempotent</strong></div></div>
+            <div class="stage"><div class="stage-title">3. Circuit breaker</div><div class="stage-content">Thấy lỗi liên tục ⇒ <strong>ngắt mạch</strong>: thất bại ngay (không gọi) để bên kia kịp hồi phục</div></div>
+            <div class="stage blue"><div class="stage-title">4. Bulkhead</div><div class="stage-content">Giới hạn số lời gọi đồng thời tới một dịch vụ — một bên chậm không nuốt hết thread</div></div>
+            <div class="stage"><div class="stage-title">5. Fallback</div><div class="stage-content">Giá trị thay thế khi thất bại (cache cũ, mặc định, báo "tạm thời không khả dụng")</div></div>
+          </div>
+          <div class="caption">Các lớp bảo vệ xếp chồng — mỗi cái chặn một kiểu hỏng.</div>
+        </div>
+
+        <h3 id="cb-states">4.1. Circuit breaker — ba trạng thái</h3>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Trạng thái</th><th>Hành vi</th><th>Chuyển trạng thái</th></tr></thead>
+            <tbody>
+              <tr><td><strong>CLOSED</strong> (bình thường)</td><td>Cho gọi; đếm tỉ lệ lỗi/chậm trong cửa sổ trượt</td><td>Tỉ lệ lỗi ≥ ngưỡng (vd 50%) ⇒ <strong>OPEN</strong></td></tr>
+              <tr><td><strong>OPEN</strong> (ngắt)</td><td><strong>Từ chối ngay</strong> (<code>CallNotPermittedException</code>), không gọi dịch vụ lỗi</td><td>Sau <code>waitDuration</code> (vd 10s) ⇒ <strong>HALF_OPEN</strong></td></tr>
+              <tr><td><strong>HALF_OPEN</strong> (thăm dò)</td><td>Cho <strong>vài</strong> lời gọi thử</td><td>Thành công ⇒ <strong>CLOSED</strong>; vẫn lỗi ⇒ <strong>OPEN</strong></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>pom.xml</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-kw">&lt;dependency</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;groupId</span><span class="tok-kw">&gt;</span>io.github.resilience4j<span class="tok-kw">&lt;/groupId</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;artifactId</span><span class="tok-kw">&gt;</span>resilience4j-spring-boot3<span class="tok-kw">&lt;/artifactId</span><span class="tok-kw">&gt;</span>
+<span class="tok-kw">&lt;/dependency</span><span class="tok-kw">&gt;</span>
+<span class="tok-kw">&lt;dependency</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;groupId</span><span class="tok-kw">&gt;</span>org.springframework.boot<span class="tok-kw">&lt;/groupId</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;artifactId</span><span class="tok-kw">&gt;</span>spring-boot-starter-aop<span class="tok-kw">&lt;/artifactId</span><span class="tok-kw">&gt;</span>          <span class="tok-com">&lt;!-- annotation chạy bằng AOP/proxy --&gt;</span>
+<span class="tok-kw">&lt;/dependency</span><span class="tok-kw">&gt;</span></code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>application.yml</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-cls">resilience4j</span>:
+  <span class="tok-cls">circuitbreaker</span>:
+    <span class="tok-cls">instances</span>:
+      <span class="tok-cls">inventory</span>:
+        <span class="tok-cls">sliding-window-type</span>: COUNT_BASED
+        <span class="tok-cls">sliding-window-size</span>: <span class="tok-num">20</span><span class="tok-com">                      # xét 20 lời gọi gần nhất</span>
+        <span class="tok-cls">minimum-number-of-calls</span>: <span class="tok-num">10</span><span class="tok-com">                  # cần ≥ 10 lời gọi mới tính tỉ lệ</span>
+        <span class="tok-cls">failure-rate-threshold</span>: <span class="tok-num">50</span><span class="tok-com">                   # ≥ 50% lỗi → OPEN</span>
+        <span class="tok-cls">slow-call-duration-threshold</span>: 1s<span class="tok-com">             # gọi &gt; 1s coi là "chậm"</span>
+        <span class="tok-cls">slow-call-rate-threshold</span>: <span class="tok-num">80</span>
+        <span class="tok-cls">wait-duration-in-open-state</span>: 10s
+        <span class="tok-cls">permitted-number-of-calls-in-half-open-state</span>: <span class="tok-num">3</span>
+        <span class="tok-cls">ignore-exceptions</span>:
+          - vn.itbasic.shop.errors.NotFoundException # lỗi nghiệp vụ KHÔNG nên làm mở mạch
+  <span class="tok-cls">retry</span>:
+    <span class="tok-cls">instances</span>:
+      <span class="tok-cls">inventory</span>:
+        <span class="tok-cls">max-attempts</span>: <span class="tok-num">3</span>
+        <span class="tok-cls">wait-duration</span>: 200ms
+        <span class="tok-cls">enable-exponential-backoff</span>: <span class="tok-kw">true</span>
+        <span class="tok-cls">exponential-backoff-multiplier</span>: <span class="tok-num">2</span>
+        <span class="tok-cls">enable-randomized-wait</span>: <span class="tok-kw">true</span><span class="tok-com">                 # jitter: tránh mọi client thử lại cùng lúc</span>
+        <span class="tok-cls">retry-exceptions</span>:
+          - java.io.IOException
+          - vn.itbasic.shop.errors.UpstreamUnavailableException
+  <span class="tok-cls">bulkhead</span>:
+    <span class="tok-cls">instances</span>:
+      <span class="tok-cls">inventory</span>:
+        <span class="tok-cls">max-concurrent-calls</span>: <span class="tok-num">20</span><span class="tok-com">                     # tối đa 20 lời gọi đồng thời tới inventory</span></code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Dùng</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Service</span>
+<span class="tok-kw">class</span> <span class="tok-cls">StockService</span> {
+
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">InventoryClient</span> inventory;
+    <span class="tok-com">// constructor …</span>
+
+    <span class="tok-ann">@CircuitBreaker</span>(name = <span class="tok-str">"inventory"</span>, fallbackMethod = <span class="tok-str">"stockFallback"</span>)
+    <span class="tok-ann">@Retry</span>(name = <span class="tok-str">"inventory"</span>)                                  <span class="tok-com">// retry nằm BÊN TRONG circuit breaker</span>
+    <span class="tok-ann">@Bulkhead</span>(name = <span class="tok-str">"inventory"</span>)
+    <span class="tok-kw">public</span> <span class="tok-cls">StockResponse</span> <span class="tok-fn">stockOf</span>(<span class="tok-kw">long</span> productId) {
+        <span class="tok-kw">return</span> inventory.<span class="tok-fn">stockOf</span>(productId);
+    }
+
+    <span class="tok-com">// Cùng tham số + thêm Throwable; chữ ký khớp</span>
+    <span class="tok-cls">StockResponse</span> <span class="tok-fn">stockFallback</span>(<span class="tok-kw">long</span> productId, <span class="tok-cls">Throwable</span> ex) {
+        log.<span class="tok-fn">warn</span>(<span class="tok-str">"Inventory không khả dụng ({}), trả 'không rõ'"</span>, ex.<span class="tok-fn">toString</span>());
+        <span class="tok-kw">return</span> <span class="tok-cls">StockResponse</span>.<span class="tok-fn">unknown</span>(productId);                <span class="tok-com">// hạ cấp chức năng thay vì lỗi cả trang</span>
+    }
+}</code></pre>
+        </div>
+        <div class="callout callout-gotcha">
+          <div class="callout-label">⚠️ Retry là con dao hai lưỡi</div>
+          <p>(1) <strong>Chỉ retry thao tác idempotent</strong> — <code>POST /charge</code> retry không có <code>Idempotency-Key</code> là trừ tiền hai lần. (2) Retry <strong>nhân tải</strong>: 3 lần thử × 1.000 client = 3.000 lời gọi đập vào dịch vụ đang yếu — <em>retry storm</em>; luôn có backoff, jitter, giới hạn, và đứng <em>dưới</em> circuit breaker. (3) Chỉ retry <strong>lỗi tạm thời</strong> (timeout, 503), không retry 400/404/422.</p>
+        </div>
+        <p>Quy tắc đặt timeout: <strong>timeout của người gọi &lt; tổng thời gian chờ của người gọi nó</strong>. Gateway timeout 5s, service A timeout 3s gọi B với timeout 1s — để một lời gọi chậm không làm cả chuỗi vượt hạn rồi retry chồng chéo.</p>
+
+        <h2 id="ha-tang">5. Gateway, discovery, cấu hình</h2>
+
+
+        <h3 id="gateway">5.1. API Gateway</h3>
+
+        <p>Client (web, mobile) không nên biết 12 dịch vụ ở đâu. <strong>API Gateway</strong> là cổng vào duy nhất: định tuyến, xác thực/phân quyền thô, giới hạn tốc độ, CORS, gom log. <strong>Spring Cloud Gateway</strong> là lựa chọn trong hệ Spring (cũng có Kong, NGINX, Envoy, AWS API Gateway).</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>application.yml — Spring Cloud Gateway</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-cls">spring</span>:
+  <span class="tok-cls">cloud</span>:
+    <span class="tok-cls">gateway</span>:
+      <span class="tok-cls">routes</span>:
+        - <span class="tok-cls">id</span>: catalog
+          <span class="tok-cls">uri</span>: http://catalog:<span class="tok-num">8080</span><span class="tok-com">                  # tên DNS của dịch vụ (trong Kubernetes: tên Service)</span>
+          <span class="tok-cls">predicates</span>:
+            - <span class="tok-cls">Path</span>=/api/products/**
+          <span class="tok-cls">filters</span>:
+            - <span class="tok-cls">StripPrefix</span>=<span class="tok-num">0</span>
+            - <span class="tok-cls">name</span>: CircuitBreaker
+              <span class="tok-cls">args</span>: { name: catalog, fallbackUri: <span class="tok-str">'forward:/fallback/catalog'</span> }
+        - <span class="tok-cls">id</span>: orders
+          <span class="tok-cls">uri</span>: http://order:<span class="tok-num">8080</span>
+          <span class="tok-cls">predicates</span>:
+            - <span class="tok-cls">Path</span>=/api/orders/**
+          <span class="tok-cls">filters</span>:
+            - <span class="tok-cls">name</span>: RequestRateLimiter<span class="tok-com">               # giới hạn tốc độ (Redis)</span>
+              <span class="tok-cls">args</span>:
+                <span class="tok-cls">redis-rate-limiter.replenishRate</span>: <span class="tok-num">20</span>
+                <span class="tok-cls">redis-rate-limiter.burstCapacity</span>: <span class="tok-num">40</span>
+      <span class="tok-cls">default-filters</span>:
+        - <span class="tok-cls">AddRequestHeader</span>=X-Gateway, shop
+  <span class="tok-cls">security</span>:
+    <span class="tok-cls">oauth2</span>:
+      <span class="tok-cls">resourceserver</span>:
+        <span class="tok-cls">jwt</span>:
+          <span class="tok-cls">issuer-uri</span>: https://keycloak.example.com/realms/shop<span class="tok-com">     # xác thực JWT ở biên (chương 10)</span></code></pre>
+        </div>
+        <div class="java-rule"><strong>Xác thực ở gateway, nhưng <em>vẫn kiểm</em> ở từng dịch vụ.</strong> Gateway kiểm token cho nhanh và từ chối sớm; mỗi dịch vụ vẫn là Resource Server tự kiểm JWT (zero trust) — nếu một dịch vụ bị truy cập trực tiếp từ trong mạng, nó không được mặc nhiên tin tưởng.</div>
+
+        <h3 id="discovery">5.2. Service discovery &amp; cấu hình: đừng làm lại việc Kubernetes đã làm</h3>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Nhu cầu</th><th>Spring Cloud (kiểu cũ)</th><th>Trên Kubernetes (hiện đại)</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Tìm dịch vụ</strong></td><td>Eureka/Consul: dịch vụ tự đăng ký, client tra danh sách</td><td><strong>DNS của Service</strong>: <code>http://order:8080</code>; K8s cân bằng tải</td></tr>
+              <tr><td><strong>Cấu hình tập trung</strong></td><td>Spring Cloud Config Server (Git)</td><td><strong>ConfigMap + Secret</strong> (chương 3, 14)</td></tr>
+              <tr><td><strong>Cân bằng tải</strong></td><td>Spring Cloud LoadBalancer phía client</td><td>kube-proxy / Ingress / service mesh</td></tr>
+              <tr><td><strong>Mạng, mTLS, retry cấp hạ tầng</strong></td><td>Tự code</td><td>Service mesh (Istio, Linkerd)</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout callout-note">
+          <div class="callout-label">📌 Thực tế</div>
+          <p>Nếu chạy trên Kubernetes, <strong>bỏ qua Eureka và Config Server</strong> — thêm hai thành phần phải vận hành mà không thêm giá trị. Spring Cloud vẫn hữu ích cho <strong>Gateway, Resilience4j, Stream, Contract</strong>. Khi dùng Spring Cloud, chọn <em>release train</em> khớp với phiên bản Boot (BOM <code>spring-cloud-dependencies</code>) — ghép sai là nguồn lỗi <code>NoSuchMethodError</code> khó hiểu.</p>
+        </div>
+
+        <h2 id="saga">6. Dữ liệu xuyên dịch vụ: Saga</h2>
+
+        <p>Đặt hàng cần: tạo đơn (Order) → giữ tồn kho (Inventory) → thanh toán (Payment). Ba CSDL riêng ⇒ <strong>không có transaction bao trùm</strong>. Giải pháp: <strong>Saga</strong> — chuỗi <em>giao dịch cục bộ</em>, mỗi bước có <strong>hành động bù trừ</strong> (compensating action) để hoàn tác nếu bước sau thất bại.</p>
+        <div class="jvm-flow">
+          <div class="stages">
+            <div class="stage"><div class="stage-title">1. Order</div><div class="stage-content">Tạo đơn <code>PENDING</code> → phát <code>OrderCreated</code></div></div>
+            <div class="stage blue"><div class="stage-title">2. Inventory</div><div class="stage-content">Giữ hàng → phát <code>StockReserved</code> (hoặc <code>StockFailed</code>)</div></div>
+            <div class="stage"><div class="stage-title">3. Payment</div><div class="stage-content">Trừ tiền → phát <code>PaymentCompleted</code></div></div>
+            <div class="stage blue"><div class="stage-title">4. Order</div><div class="stage-content">Nhận → đơn <code>CONFIRMED</code></div></div>
+            <div class="stage"><div class="stage-title">✗ Thanh toán thất bại</div><div class="stage-content">Phát <code>PaymentFailed</code> ⇒ <strong>Inventory nhả hàng</strong> (bù trừ) ⇒ Order <code>CANCELLED</code></div></div>
+          </div>
+          <div class="caption">Mỗi bước là một transaction cục bộ; lỗi ⇒ chạy ngược các bù trừ, không rollback toàn cục.</div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th></th><th>Choreography (biên đạo)</th><th>Orchestration (nhạc trưởng)</th></tr></thead>
+            <tbody>
+              <tr><td>Cách điều phối</td><td>Mỗi dịch vụ <strong>nghe sự kiện</strong> của dịch vụ khác và phản ứng</td><td>Một <strong>orchestrator</strong> ra lệnh từng bước và theo dõi trạng thái</td></tr>
+              <tr><td>Kết dính</td><td>Lỏng; không có điểm trung tâm</td><td>Logic quy trình tập trung ở một chỗ</td></tr>
+              <tr><td>Khó khăn</td><td>Khó thấy toàn bộ luồng; dễ vòng lặp sự kiện</td><td>Orchestrator thêm một thành phần; có thể thành "god service"</td></tr>
+              <tr><td>Phù hợp</td><td>Quy trình ngắn, ít bước (2-4)</td><td>Quy trình dài, nhiều nhánh, cần theo dõi/trực quan hoá</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <ul>
+          <li>Mỗi bước cần <strong>idempotent</strong> và dùng <strong>Outbox</strong> (chương 12) để phát sự kiện đáng tin cậy.</li>
+          <li><strong>Hành động bù trừ không phải rollback</strong>: không thể "xoá" email đã gửi — bù trừ là gửi email huỷ. Thiết kế nghiệp vụ chấp nhận trạng thái trung gian (<code>PENDING</code>).</li>
+          <li>Lưu <strong>trạng thái saga</strong> rõ ràng (<code>PENDING → CONFIRMED/CANCELLED</code>) để truy vết và xử lý timeout (<code>PENDING</code> quá 15 phút ⇒ huỷ).</li>
+        </ul>
+
+        <h2 id="observability">7. Quan sát được hệ thống (Observability)</h2>
+
+        <p>Một request người dùng giờ đi qua 5 dịch vụ. "Chậm" ở đâu? Không có công cụ, bạn mò mẫm bằng log của từng dịch vụ. Observability có <strong>ba trụ cột</strong>:</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Trụ cột</th><th>Trả lời</th><th>Công cụ thường dùng</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Metrics</strong> (số liệu)</td><td>Hệ thống <strong>có khoẻ không</strong>? (QPS, tỉ lệ lỗi, p95 latency, pool, JVM)</td><td>Micrometer → <strong>Prometheus</strong> → <strong>Grafana</strong></td></tr>
+              <tr><td><strong>Logs</strong> (nhật ký)</td><td><strong>Chuyện gì</strong> đã xảy ra ở dịch vụ này?</td><td>Log JSON có cấu trúc → Loki / ELK</td></tr>
+              <tr><td><strong>Traces</strong> (vết)</td><td>Một request <strong>đi đâu, mất bao lâu</strong> ở từng dịch vụ?</td><td>Micrometer Tracing + <strong>OpenTelemetry</strong> → Tempo / Jaeger / Zipkin</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>pom.xml</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-kw">&lt;dependency</span><span class="tok-kw">&gt;</span><span class="tok-kw">&lt;groupId</span><span class="tok-kw">&gt;</span>org.springframework.boot<span class="tok-kw">&lt;/groupId</span><span class="tok-kw">&gt;</span><span class="tok-kw">&lt;artifactId</span><span class="tok-kw">&gt;</span>spring-boot-starter-actuator<span class="tok-kw">&lt;/artifactId</span><span class="tok-kw">&gt;</span><span class="tok-kw">&lt;/dependency</span><span class="tok-kw">&gt;</span>
+<span class="tok-kw">&lt;dependency</span><span class="tok-kw">&gt;</span><span class="tok-kw">&lt;groupId</span><span class="tok-kw">&gt;</span>io.micrometer<span class="tok-kw">&lt;/groupId</span><span class="tok-kw">&gt;</span><span class="tok-kw">&lt;artifactId</span><span class="tok-kw">&gt;</span>micrometer-registry-prometheus<span class="tok-kw">&lt;/artifactId</span><span class="tok-kw">&gt;</span><span class="tok-kw">&lt;/dependency</span><span class="tok-kw">&gt;</span>
+<span class="tok-kw">&lt;dependency</span><span class="tok-kw">&gt;</span><span class="tok-kw">&lt;groupId</span><span class="tok-kw">&gt;</span>io.micrometer<span class="tok-kw">&lt;/groupId</span><span class="tok-kw">&gt;</span><span class="tok-kw">&lt;artifactId</span><span class="tok-kw">&gt;</span>micrometer-tracing-bridge-otel<span class="tok-kw">&lt;/artifactId</span><span class="tok-kw">&gt;</span><span class="tok-kw">&lt;/dependency</span><span class="tok-kw">&gt;</span>
+<span class="tok-kw">&lt;dependency</span><span class="tok-kw">&gt;</span><span class="tok-kw">&lt;groupId</span><span class="tok-kw">&gt;</span>io.opentelemetry<span class="tok-kw">&lt;/groupId</span><span class="tok-kw">&gt;</span><span class="tok-kw">&lt;artifactId</span><span class="tok-kw">&gt;</span>opentelemetry-exporter-otlp<span class="tok-kw">&lt;/artifactId</span><span class="tok-kw">&gt;</span><span class="tok-kw">&lt;/dependency</span><span class="tok-kw">&gt;</span></code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>application.yml</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-cls">management</span>:
+  <span class="tok-cls">endpoints</span>:
+    <span class="tok-cls">web</span>:
+      <span class="tok-cls">exposure</span>:
+        <span class="tok-cls">include</span>: health,info,prometheus<span class="tok-com">                   # /actuator/prometheus để Prometheus cào</span>
+  <span class="tok-cls">endpoint</span>:
+    <span class="tok-cls">health</span>:
+      <span class="tok-cls">probes</span>:
+        <span class="tok-cls">enabled</span>: <span class="tok-kw">true</span><span class="tok-com">                                     # /actuator/health/liveness &amp; /readiness cho Kubernetes</span>
+  <span class="tok-cls">tracing</span>:
+    <span class="tok-cls">sampling</span>:
+      <span class="tok-cls">probability</span>: <span class="tok-num">0.1</span><span class="tok-com">                                    # lấy mẫu 10% request ở production (1.0 khi dev)</span>
+  <span class="tok-cls">otlp</span>:
+    <span class="tok-cls">tracing</span>:
+      <span class="tok-cls">endpoint</span>: http://otel-collector:<span class="tok-num">4318</span>/v1/traces
+  <span class="tok-cls">metrics</span>:
+    <span class="tok-cls">tags</span>:
+      <span class="tok-cls">application</span>: ${spring.application.name}<span class="tok-com">            # gắn nhãn dịch vụ cho mọi metric</span>
+<span class="tok-cls">logging</span>:
+  <span class="tok-cls">pattern</span>:
+    <span class="tok-cls">correlation</span>: <span class="tok-str">"[${spring.application.name:},%X{traceId:-},%X{spanId:-}] "</span><span class="tok-com">    # traceId vào MỌI dòng log (Boot 3.2+)</span></code></pre>
+        </div>
+        <div class="jvm-flow">
+          <div class="stages">
+            <div class="stage"><div class="stage-title">Client</div><div class="stage-content">Gửi request, không có trace</div></div>
+            <div class="stage blue"><div class="stage-title">Gateway</div><div class="stage-content">Tạo <strong>traceId = abc123</strong>, spanId; thêm header <code>traceparent</code></div></div>
+            <div class="stage"><div class="stage-title">Order service</div><div class="stage-content">Nhận <code>traceparent</code> → cùng <code>abc123</code>, span mới; log có <code>abc123</code></div></div>
+            <div class="stage blue"><div class="stage-title">Inventory service</div><div class="stage-content">Nhận tiếp <code>traceparent</code> → cùng <code>abc123</code></div></div>
+            <div class="stage"><div class="stage-title">Tempo/Jaeger</div><div class="stage-content">Gom span theo <code>abc123</code> → vẽ <strong>biểu đồ thác nước</strong> thời gian từng bước</div></div>
+          </div>
+          <div class="caption"><code>RestClient</code>, <code>KafkaTemplate</code>, <code>@Async</code> do Spring cấu hình sẵn tự truyền <code>traceparent</code> (chuẩn W3C) — không cần code.</div>
+        </div>
+        <div class="callout callout-tip">
+          <div class="callout-label">💡 Bốn con số vàng và probes</div>
+          <p>Theo dõi cho mỗi dịch vụ: <strong>lưu lượng, tỉ lệ lỗi, độ trễ (p95/p99), độ bão hoà</strong> (pool, CPU, hàng đợi) — <em>Golden Signals</em>. Liveness probe = "process còn sống không" (restart nếu hỏng); readiness probe = "sẵn sàng nhận request không" (rút khỏi load balancer khi DB mất). <strong>Đừng gộp DB vào liveness</strong> — DB lỗi mà K8s restart cả dịch vụ chỉ làm tệ thêm.</p>
+        </div>
+
+        <h2 id="virtual-threads">8. Virtual threads — thay đổi bài toán I/O</h2>
+
+        <p>Mô hình cổ điển (Tomcat): <strong>một thread mỗi request</strong>; thread chặn khi chờ DB/HTTP, nên số request đồng thời bị giới hạn bởi pool thread (~200). Để vượt, người ta dùng lập trình phản ứng (WebFlux) — mạnh nhưng khó viết và debug. <strong>Java 21 virtual threads</strong> cho phép giữ code <em>đồng bộ, đơn giản</em> mà vẫn phục vụ hàng chục nghìn request đồng thời, vì chờ I/O không còn giữ thread hệ điều hành.</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>application.yml</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-cls">spring</span>:
+  <span class="tok-cls">threads</span>:
+    <span class="tok-cls">virtual</span>:
+      <span class="tok-cls">enabled</span>: <span class="tok-kw">true</span><span class="tok-com">            # Boot 3.2+ &amp; Java 21: Tomcat, @Async, @Scheduled… chạy trên virtual thread</span></code></pre>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th></th><th>MVC + virtual threads</th><th>WebFlux (reactive)</th></tr></thead>
+            <tbody>
+              <tr><td>Phong cách code</td><td><strong>Tuần tự</strong>, quen thuộc, debug stack trace thường</td><td>Bất đồng bộ <code>Mono/Flux</code>, khó debug</td></tr>
+              <tr><td>Hợp khi</td><td><strong>Chặn I/O</strong> (JDBC, REST đồng bộ) — <strong>đa số ứng dụng CRUD</strong></td><td>Streaming, backpressure, hệ sinh thái toàn reactive</td></tr>
+              <tr><td>Giới hạn</td><td>Việc <strong>tính toán nặng CPU</strong> không được lợi; chú ý <em>pinning</em> (<code>synchronized</code> chặn lâu ở JDK &lt; 24); pool kết nối DB vẫn là nút thắt</td><td>Mọi thư viện phải reactive (JDBC chặn thì mất ý nghĩa — cần R2DBC)</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout callout-note">
+          <div class="callout-label">📌 Khuyến nghị 2025</div>
+          <p>Dự án mới trên Java 21: <strong>Spring MVC + virtual threads</strong> cho đa số trường hợp. Virtual thread giải quyết <em>số thread</em>, không giải quyết <em>nút thắt khác</em>: pool JDBC (10 kết nối) vẫn là trần thông lượng DB — chương 6. Hãy <strong>đo</strong> bằng tải thật (k6, Gatling) trước khi kết luận.</p>
+        </div>
+
+        <h2 id="bao-mat-test">9. Bảo mật và kiểm thử giữa các dịch vụ</h2>
+
+        <ul>
+          <li><strong>Truyền danh tính</strong>: chuyển tiếp JWT của người dùng (<code>Authorization</code>) qua <code>RestClient</code> interceptor; hoặc <strong>OAuth2 client credentials</strong> khi dịch vụ gọi dịch vụ <em>tự thân</em> (không có người dùng).</li>
+          <li><strong>mTLS</strong> ở tầng hạ tầng (service mesh) để mã hoá &amp; xác thực lẫn nhau trong mạng nội bộ.</li>
+          <li><strong>Contract testing</strong> (Pact, Spring Cloud Contract): hợp đồng giữa consumer và provider được kiểm tự động trong CI ⇒ đổi API ở một bên không âm thầm làm vỡ bên kia (bổ sung cho OpenAPI — chương 8).</li>
+          <li><strong>Test một dịch vụ</strong> bằng WireMock cho các dịch vụ khác + Testcontainers cho DB/broker (chương 11); chỉ có <em>vài</em> test end-to-end xuyên toàn hệ thống vì chúng chậm và mong manh.</li>
+        </ul>
+
+        <h2 id="cheat-sheet">10. Cheat sheet chương 13</h2>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Câu hỏi</th><th>Trả lời ngắn</th></tr></thead>
+            <tbody>
+              <tr><td>Có nên dùng microservices?</td><td>Mặc định <strong>modular monolith</strong>; tách khi có nhu cầu đo được (đội, scale, vòng đời)</td></tr>
+              <tr><td>Chia dịch vụ thế nào?</td><td>Theo <strong>bounded context</strong>; <strong>database per service</strong></td></tr>
+              <tr><td>Gọi dịch vụ khác</td><td><code>RestClient</code>/HTTP Interface + <strong>timeout</strong>; ưu tiên <strong>sự kiện</strong> cho luồng ghi</td></tr>
+              <tr><td>Chịu lỗi</td><td>Timeout → retry (idempotent, backoff+jitter) → <strong>circuit breaker</strong> → bulkhead → fallback</td></tr>
+              <tr><td>Cổng vào</td><td>API Gateway (xác thực thô, định tuyến, rate limit) + mỗi dịch vụ vẫn kiểm JWT</td></tr>
+              <tr><td>Discovery/Config trên K8s</td><td>DNS Service + ConfigMap/Secret — bỏ Eureka/Config Server</td></tr>
+              <tr><td>Nhất quán xuyên dịch vụ</td><td><strong>Saga</strong> (bù trừ) + <strong>Outbox</strong> + consumer idempotent</td></tr>
+              <tr><td>Quan sát</td><td>Metrics (Prometheus) + log JSON có <code>traceId</code> + tracing (OpenTelemetry); probes liveness/readiness</td></tr>
+              <tr><td>Hiệu năng I/O</td><td>Java 21 <strong>virtual threads</strong> (<code>spring.threads.virtual.enabled</code>) + đo bằng tải thật</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="bai-tap">Bài tập</h2>
+
+        <div class="exercises">
+
+          <div class="exercise">
+            <h4>Tách một module khỏi monolith</h4>
+            <div class="exercise-body">
+              <p>Từ dự án shop (modular monolith), tách <code>inventory</code> thành ứng dụng Boot riêng với CSDL riêng.</p>
+              <ul>
+                <li><code>order</code> gọi <code>inventory</code> qua <code>RestClient</code> có timeout (connect 500ms, read 2s).</li>
+                <li>Dừng <code>inventory</code>: <code>order</code> nhận lỗi gì, sau bao lâu? So sánh khi <em>không</em> đặt timeout.</li>
+                <li>Đã có <code>ArchUnit</code> (chương 8) — module có phụ thuộc ngược nào cản trở việc tách không?</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Không timeout ⇒ chờ rất lâu (hoặc đến khi OS bỏ kết nối) và cạn thread Tomcat. Phụ thuộc ngược (entity <code>Product</code> dùng chung) phải thay bằng <strong>bản sao dữ liệu cục bộ</strong> hoặc API — đó chính là chi phí của việc tách.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Circuit breaker thực nghiệm</h4>
+            <div class="exercise-body">
+              <p>Thêm Resilience4j cho <code>InventoryClient</code>. Viết một dịch vụ giả có endpoint chậm/lỗi theo công tắc.</p>
+              <ul>
+                <li>Làm inventory trả 503 liên tục: sau bao nhiêu lời gọi mạch mở? Xem <code>/actuator/circuitbreakers</code> hoặc metric <code>resilience4j.circuitbreaker.state</code>.</li>
+                <li>Ở trạng thái OPEN gọi tiếp: thời gian phản hồi bao nhiêu? (≈ 0 ms) Vì sao đó là điều tốt?</li>
+                <li>Bật lại dịch vụ: mạch về CLOSED qua HALF_OPEN thế nào?</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p><code>minimum-number-of-calls: 10</code>, <code>failure-rate-threshold: 50</code> ⇒ mở sau ≥10 lời gọi với ≥50% lỗi. OPEN ⇒ <code>CallNotPermittedException</code> tức thì, fallback chạy; bên yếu có thời gian hồi phục.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Retry storm</h4>
+            <div class="exercise-body">
+              <p>Cho <code>retry max-attempts: 5</code>, không backoff, 200 client đồng thời gọi một dịch vụ đang quá tải.</p>
+              <ul>
+                <li>Tính tổng lời gọi tối đa tới dịch vụ đó.</li>
+                <li>Sửa: backoff luỹ thừa + jitter, <code>max-attempts: 3</code>, thêm circuit breaker.</li>
+                <li>Vì sao retry một <code>POST /payments</code> không có <code>Idempotency-Key</code> là nguy hiểm?</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>200 × 5 = 1.000 lời gọi dồn dập, đúng lúc dịch vụ yếu nhất ⇒ càng sập. Jitter rải các lần thử theo thời gian. <code>POST</code> không idempotent ⇒ có thể xử lý hai lần dù client chỉ "thử lại".</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Saga đặt hàng (choreography)</h4>
+            <div class="exercise-body">
+              <p>Cài luồng đặt hàng ba dịch vụ bằng sự kiện (Kafka + Outbox): <code>OrderCreated → StockReserved → PaymentCompleted → OrderConfirmed</code>.</p>
+              <ul>
+                <li>Cho Payment thất bại có chủ đích: kiểm tra Inventory nhả hàng và Order thành <code>CANCELLED</code>.</li>
+                <li>Một đơn <code>PENDING</code> quá 15 phút: viết job huỷ nó.</li>
+                <li>Vẽ sơ đồ trạng thái của Order và liệt kê hành động bù trừ của từng bước.</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Bù trừ: <code>ReleaseStock</code> (nhả hàng), <code>RefundPayment</code> (nếu đã trừ), <code>CancelOrder</code>. Mỗi bước phải idempotent vì sự kiện có thể giao lại. Ghi <em>trạng thái saga</em> trong bảng để job timeout và để truy vết.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Nhìn thấy request xuyên dịch vụ</h4>
+            <div class="exercise-body">
+              <p>Dựng <code>docker-compose</code>: hai dịch vụ Spring + OpenTelemetry Collector + Grafana Tempo (hoặc Jaeger) + Prometheus.</p>
+              <ul>
+                <li>Gọi gateway → order → inventory; tìm trace theo <code>traceId</code> và đọc biểu đồ thác nước.</li>
+                <li>Làm chậm inventory 1,5 giây: nhìn trace thấy span nào dài?</li>
+                <li>Lọc log của cả hai dịch vụ theo cùng <code>traceId</code>.</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p><code>logging.pattern.correlation</code> đưa <code>traceId</code> vào log; <code>management.tracing.sampling.probability=1.0</code> khi thử. Trace cho biết <em>ở đâu</em> chậm; metrics cho biết <em>có chậm thường xuyên không</em>; log cho biết <em>vì sao</em>.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+        </div>
+
+        <h2 id="quiz">Quiz</h2>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q1</span>
+            <div class="quiz-q-text"><p>Khi nào nên chọn microservices thay vì modular monolith?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Khi có nhu cầu <strong>đo được</strong> mà monolith không đáp ứng: nhiều đội cần triển khai độc lập, một phần cần scale/công nghệ riêng, hoặc build/triển khai cả khối quá chậm — <em>và</em> đã có nền tảng (CI/CD, giám sát, đội vận hành) để gánh độ phức tạp phân tán. Với đội nhỏ, miền chưa ổn định: modular monolith, tách sau khi ranh giới đã rõ.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q2</span>
+            <div class="quiz-q-text"><p>Vì sao mỗi microservice nên có CSDL riêng?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Dùng chung CSDL biến ranh giới thành giả: đổi schema vỡ nhiều dịch vụ, không triển khai/scale độc lập, khoá và transaction chéo dịch vụ. CSDL riêng đảm bảo <strong>sở hữu dữ liệu</strong> — dịch vụ khác chỉ truy cập qua API hoặc sự kiện. Cái giá: mất join/transaction xuyên dịch vụ ⇒ Saga, bản sao cục bộ.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q3</span>
+            <div class="quiz-q-text"><p>Circuit breaker hoạt động ra sao và vì sao cần?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Theo dõi tỉ lệ lỗi/chậm: <strong>CLOSED</strong> (bình thường) → vượt ngưỡng ⇒ <strong>OPEN</strong> (từ chối ngay, không gọi) → sau một khoảng ⇒ <strong>HALF_OPEN</strong> (thử vài lời gọi) → thành công ⇒ CLOSED. Cần để <strong>ngăn lỗi lan truyền</strong>: không dồn thêm tải và không giữ thread chờ một dịch vụ đang hỏng, cho nó thời gian hồi phục.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q4</span>
+            <div class="quiz-q-text"><p>Khi nào không nên retry? Retry có thể gây hại thế nào?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Không retry <strong>thao tác không idempotent</strong> (trừ khi có idempotency key) và <strong>lỗi không tạm thời</strong> (4xx, lỗi nghiệp vụ). Retry nhân tải — nhiều client cùng retry gây <em>retry storm</em> làm dịch vụ yếu sập hẳn; cần backoff luỹ thừa + jitter, giới hạn số lần và đặt dưới circuit breaker.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q5</span>
+            <div class="quiz-q-text"><p>Saga là gì? Choreography khác orchestration thế nào?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Chuỗi giao dịch cục bộ giữa các dịch vụ, mỗi bước có hành động <strong>bù trừ</strong> khi bước sau thất bại (thay cho transaction phân tán). <em>Choreography</em>: dịch vụ tự phản ứng với sự kiện, không điểm trung tâm (hợp quy trình ngắn). <em>Orchestration</em>: một orchestrator điều khiển và theo dõi từng bước (hợp quy trình dài, nhiều nhánh).</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q6</span>
+            <div class="quiz-q-text"><p>Ba trụ cột của observability? Trace khác log ở đâu?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p><strong>Metrics</strong> (hệ thống có khoẻ không), <strong>logs</strong> (chuyện gì đã xảy ra), <strong>traces</strong> (một request đi qua những dịch vụ nào và mất bao lâu). Log là sự kiện rời rạc <em>trong một dịch vụ</em>; trace gắn các span <em>xuyên dịch vụ</em> bằng <code>traceId</code> truyền qua header <code>traceparent</code>, cho thấy chính xác nút thắt ở đâu.</p>
+            </div>
+          </details>
+        </div>
+
+        <h2 id="tong-ket">Tổng kết</h2>
+
+        <p>Sau chương 13, bạn đã nắm:</p>
+        <ul>
+          <li>Mặc định <strong>modular monolith</strong>; chỉ tách microservices khi có nhu cầu đo được và đã có nền tảng vận hành.</li>
+          <li>Chia theo <strong>bounded context</strong>; <strong>database per service</strong>; giao tiếp qua API hoặc sự kiện, không qua CSDL.</li>
+          <li>**<code>RestClient</code>/HTTP Interface<strong> luôn kèm </strong>timeout**; ưu tiên sự kiện cho luồng ghi.</li>
+          <li><strong>Resilience4j</strong>: timeout → retry (idempotent, backoff+jitter) → circuit breaker → bulkhead → fallback.</li>
+          <li><strong>API Gateway</strong> ở biên; trên Kubernetes dùng DNS/ConfigMap thay Eureka/Config Server; mỗi dịch vụ vẫn kiểm JWT.</li>
+          <li><strong>Saga</strong> (bù trừ) + <strong>Outbox</strong> + idempotent cho nhất quán xuyên dịch vụ.</li>
+          <li><strong>Observability</strong>: Prometheus/Grafana, log có <code>traceId</code>, OpenTelemetry tracing; probes liveness/readiness; <strong>virtual threads</strong> cho I/O chặn.</li>
+        </ul>
+
+        <h2 id="ket-noi">Kết nối</h2>
+        <ul>
+          <li><strong>Chương 8</strong> — modular monolith, package-by-feature, OpenAPI &amp; contract: nền để tách dịch vụ; Idempotency-Key.</li>
+          <li><strong>Chương 10</strong> — mỗi dịch vụ là Resource Server; client credentials cho gọi dịch vụ-dịch vụ.</li>
+          <li><strong>Chương 12</strong> — Kafka/RabbitMQ, Outbox, consumer idempotent, retry/DLQ: xương sống của Saga.</li>
+          <li><strong>Chương 14</strong> — đóng gói từng dịch vụ thành image, triển khai lên Kubernetes cùng probes.</li>
+          <li><strong>System Design chương 6 &amp; 7</strong> — Monolith vs Microservices, API Gateway, rate limiting ở quy mô hệ thống.</li>
+          <li><strong>DevOps chương 6, 10, 11</strong> — Kubernetes, observability, SRE. <strong>Networking chương 8</strong> — REST/gRPC/GraphQL.</li>
+          <li><strong>OOP chương 8</strong> — DDD-lite &amp; bounded context. <strong>Java chương 12</strong> — luồng/virtual thread nền tảng.</li>
+        </ul>
+
+        <nav class="chapter-nav">
+          <a href="chuong12.html" class="prev">
+            <div class="dir">← Chương 12</div>
+            <div class="label">Cache, Messaging &amp;amp; Async</div>
+          </a>
+          <a href="chuong14.html" class="next">
+            <div class="dir">Chương 14 →</div>
+            <div class="label">Docker, deploy &amp;amp; dự án thực chiến</div>
+          </a>
+        </nav>
+
+      </main>
+
+      <aside class="toc">
+        <div class="toc-label">Trong chương này</div>
+        <ul>
+          <li><a href="#khi-nao">1. Monolith, modular monolith hay microservices?</a></li>
+          <li><a href="#phan-ra">2. Phân rã theo bounded context</a></li>
+          <li><a href="#giao-tiep">3. Gọi dịch vụ khác</a></li>
+          <li class="level-3"><a href="#restclient">3.1. <code>RestClient</code> (Spring 6.1)</a></li>
+          <li class="level-3"><a href="#http-interface">3.2. HTTP Interface — khai báo như Feign</a></li>
+          <li><a href="#resilience">4. Khả năng chịu lỗi: timeout, retry, circuit breaker</a></li>
+          <li class="level-3"><a href="#cb-states">4.1. Circuit breaker — ba trạng thái</a></li>
+          <li><a href="#ha-tang">5. Gateway, discovery, cấu hình</a></li>
+          <li class="level-3"><a href="#gateway">5.1. API Gateway</a></li>
+          <li class="level-3"><a href="#discovery">5.2. Service discovery &amp; cấu hình: đừng làm lại việc Kubernetes đã làm</a></li>
+          <li><a href="#saga">6. Dữ liệu xuyên dịch vụ: Saga</a></li>
+          <li><a href="#observability">7. Quan sát được hệ thống (Observability)</a></li>
+          <li><a href="#virtual-threads">8. Virtual threads — thay đổi bài toán I/O</a></li>
+          <li><a href="#bao-mat-test">9. Bảo mật và kiểm thử giữa các dịch vụ</a></li>
+          <li><a href="#cheat-sheet">10. Cheat sheet chương 13</a></li>
+          <li><a href="#bai-tap">Bài tập</a></li>
+          <li><a href="#quiz">Quiz</a></li>
+          <li><a href="#tong-ket">Tổng kết</a></li>
+          <li><a href="#ket-noi">Kết nối</a></li>
+        </ul>
+      </aside>
+
+    </div>
+  </div>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p>
+        Chương 13 — Microservices &amp;amp; Spring Cloud · Spring Boot sub-pillar · Pillar 9 IT Basic<br/>
+        <a href="chuong12.html">← Chương 12</a> · <a href="../index.html">Spring Boot TOC</a> · <a href="chuong14.html">Chương 14 →</a>
+      </p>
+    </div>
+  </footer>
+
+  <script src="../../shared/js/chapter.js"></script>
+</body>
+</html>

@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chương 9 — Spring Security — xác thực, phân quyền và những thứ bảo vệ API · Spring Boot Sub-pillar</title>
+  <meta name="description" content="Kiến trúc filter chain của Spring Security 6, SecurityFilterChain, UserDetailsService, mã hoá mật khẩu BCrypt, roles và authorities, method security, CSRF, CORS, xử lý 401/403 và các lỗi bảo mật thường gặp (OWASP)." />
+  <meta name="theme-color" content="#4a9a28" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Bitter:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="../../shared/css/base.css">
+  <link rel="stylesheet" href="../css/theme.css">
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="container">
+      <a class="site-logo" href="../../../index.html">
+        <span class="mark mark-spring">Sb</span>
+        Spring Boot · IT Basic
+      </a>
+      <nav>
+        <ul class="site-nav">
+          <li><a href="../../../index.html">IT Basic</a></li>
+          <li><a href="../../index.html">Pillar 9</a></li>
+          <li><a href="../../Java/index.html">Java</a></li>
+          <li><a href="../index.html" class="active">Spring Boot</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <div class="container">
+    <header class="chapter-header">
+      <div class="breadcrumb">
+        <a href="../../../index.html">IT Basic</a><span class="sep">/</span>
+        <a href="../../index.html">Pillar 9</a><span class="sep">/</span>
+        <a href="../index.html">Spring Boot</a><span class="sep">/</span>
+        <span>Chương 9</span>
+      </div>
+      <div class="chapter-num">Chương 09 · Spring Security</div>
+      <h1 style="font-size: 2.6rem; margin: 0 0 12px; color: var(--ink);">
+        Spring Security — xác thực, phân quyền và những thứ bảo vệ API
+      </h1>
+      <p class="lead">
+        Thêm <code>spring-boot-starter-security</code> vào <code>pom.xml</code> — <strong>lập tức mọi endpoint đều đòi đăng nhập</strong>, và một mật khẩu ngẫu nhiên in ra log. Spring Security "an toàn theo mặc định" nhưng cũng là module khó hiểu nhất nếu chỉ copy-paste cấu hình. Chương này mổ xẻ nó từ <em>kiến trúc</em> (một chuỗi <code>Filter</code>) đến <em>thực hành</em> (người dùng trong CSDL, BCrypt, role, phân quyền theo method, CSRF/CORS), để chương 10 gắn JWT lên trên mà không còn là phép màu.
+      </p>
+      <div class="chapter-meta">
+        <span class="item"><strong>Bài tập:</strong> 5</span>
+        <span class="item"><strong>Quiz:</strong> 6</span>
+        <span class="item"><strong>Prerequisites:</strong> Chương 1-8</span>
+      </div>
+    </header>
+
+    <div class="layout">
+
+      <main class="prose">
+
+        <div class="callout callout-goal">
+          <div class="callout-label">🎯 Mục tiêu chương</div>
+          <ul>
+            <li>Phân biệt <strong>xác thực (authentication)</strong> và <strong>phân quyền (authorization)</strong>; nhớ <strong>401 vs 403</strong>.</li>
+            <li>Vẽ được <strong>Security Filter Chain</strong> và vị trí của nó so với <code>DispatcherServlet</code>.</li>
+            <li>Cấu hình **<code>SecurityFilterChain</code>** bằng lambda DSL của Spring Security 6.</li>
+            <li>Lưu người dùng trong CSDL với **<code>UserDetailsService</code><strong> và mã hoá mật khẩu bằng </strong>BCrypt**.</li>
+            <li>Phân biệt <strong>role</strong> và <strong>authority</strong> (tiền tố <code>ROLE_</code>), dùng <strong>method security</strong> (<code>@PreAuthorize</code>).</li>
+            <li>Hiểu khi nào <strong>tắt CSRF</strong>; cấu hình <strong>CORS</strong> đúng chỗ.</li>
+            <li>Trả JSON <strong>401/403</strong> thống nhất và tránh các lỗi OWASP phổ biến (IDOR, lộ thông tin).</li>
+          </ul>
+        </div>
+
+        <h2 id="khai-niem">1. Hai câu hỏi khác nhau</h2>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th></th><th>Xác thực (Authentication)</th><th>Phân quyền (Authorization)</th></tr></thead>
+            <tbody>
+              <tr><td>Câu hỏi</td><td><strong>Bạn là ai?</strong></td><td><strong>Bạn được làm gì?</strong></td></tr>
+              <tr><td>Bằng chứng</td><td>Mật khẩu, token, vân tay, chứng chỉ</td><td>Vai trò, quyền, chủ sở hữu tài nguyên</td></tr>
+              <tr><td>Thất bại</td><td><strong>401 Unauthorized</strong> (nên gọi là "unauthenticated")</td><td><strong>403 Forbidden</strong></td></tr>
+              <tr><td>Trong Spring</td><td><code>AuthenticationManager</code>, <code>UserDetailsService</code></td><td><code>authorizeHttpRequests</code>, <code>@PreAuthorize</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="java-rule"><strong>Nhớ chắc: 401 = chưa biết bạn là ai (thiếu/sai/hết hạn thông tin xác thực). 403 = biết bạn là ai rồi, nhưng bạn không được phép.</strong> Trả 403 cho người chưa đăng nhập hay 401 cho người thiếu quyền đều làm client xử lý sai (ví dụ: tự đẩy người dùng sang trang đăng nhập khi thật ra họ đã đăng nhập).</div>
+
+        <h2 id="mac-dinh">2. Thêm starter — chuyện gì xảy ra?</h2>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>pom.xml</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-kw">&lt;dependency</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;groupId</span><span class="tok-kw">&gt;</span>org.springframework.boot<span class="tok-kw">&lt;/groupId</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;artifactId</span><span class="tok-kw">&gt;</span>spring-boot-starter-security<span class="tok-kw">&lt;/artifactId</span><span class="tok-kw">&gt;</span>
+<span class="tok-kw">&lt;/dependency</span><span class="tok-kw">&gt;</span></code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Log khi khởi động</span><button class="copy-btn">Copy</button></div>
+<pre><code>Using generated security password: 3f1c6e0a-9a4d-4d1c-8c0e-1b2a5e7f9d10
+This generated password is for development use only. Your security configuration must be updated before running your application in production.</code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Thử</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-fn">curl</span> <span class="tok-kw">-i</span> localhost:8080/api/products
+<span class="tok-com"># HTTP/1.1 401        ← mọi endpoint bị khoá</span>
+
+<span class="tok-fn">curl</span> <span class="tok-kw">-i</span> <span class="tok-kw">-u</span> user:3f1c6e0a-9a4d-4d1c-8c0e-1b2a5e7f9d10 localhost:8080/api/products
+<span class="tok-com"># HTTP/1.1 200        ← HTTP Basic với user mặc định "user"</span></code></pre>
+        </div>
+        <p>Mặc định Boot bật: mọi request phải xác thực; form login + HTTP Basic; <strong>CSRF</strong>; session; các <strong>security header</strong> (<code>X-Content-Type-Options</code>, <code>Cache-Control</code>, <code>X-Frame-Options</code>…). Ta sẽ thay những mặc định này bằng cấu hình phù hợp REST API.</p>
+
+        <h2 id="filter-chain">3. Kiến trúc: một chuỗi filter</h2>
+
+        <p>Spring Security <strong>không</strong> nằm trong controller — nó là một chuỗi <code>Filter</code> chạy <strong>trước</strong> <code>DispatcherServlet</code> (chương 4). Request bị chặn ở đây thì không bao giờ tới controller.</p>
+        <div class="jvm-flow">
+          <div class="stages">
+            <div class="stage"><div class="stage-title">Request</div><div class="stage-content">Từ Tomcat</div></div>
+            <div class="stage blue"><div class="stage-title"><code>DelegatingFilterProxy</code> → <code>FilterChainProxy</code></div><div class="stage-content">Cầu nối Servlet ⇄ Spring; chọn chuỗi theo URL</div></div>
+            <div class="stage"><div class="stage-title"><code>SecurityContextHolderFilter</code></div><div class="stage-content">Nạp <code>SecurityContext</code> (ai đang đăng nhập)</div></div>
+            <div class="stage blue"><div class="stage-title">Filter xác thực</div><div class="stage-content"><code>UsernamePasswordAuthenticationFilter</code> / <code>BasicAuthenticationFilter</code> / <em>filter JWT của bạn (chương 10)</em></div></div>
+            <div class="stage"><div class="stage-title"><code>ExceptionTranslationFilter</code></div><div class="stage-content">Bắt lỗi xác thực/phân quyền → 401/403</div></div>
+            <div class="stage blue"><div class="stage-title"><code>AuthorizationFilter</code></div><div class="stage-content">Kiểm tra <code>authorizeHttpRequests(...)</code>: được vào URL này không?</div></div>
+            <div class="stage"><div class="stage-title"><code>DispatcherServlet</code> → Controller</div><div class="stage-content">Chỉ đến đây khi mọi thứ ở trên cho qua</div></div>
+          </div>
+          <div class="caption">Mỗi filter làm một việc; bạn tuỳ biến bằng cách bật/tắt/chèn filter.</div>
+        </div>
+
+        <h3 id="context">3.1. Ba khái niệm lõi</h3>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Khái niệm</th><th>Là gì</th></tr></thead>
+            <tbody>
+              <tr><td><code>SecurityContextHolder</code></td><td>Nơi giữ <code>SecurityContext</code> của request hiện tại (gắn với thread)</td></tr>
+              <tr><td><code>Authentication</code></td><td>"Hồ sơ" người dùng: <code>principal</code> (ai), <code>credentials</code> (bằng chứng), <code>authorities</code> (quyền), <code>isAuthenticated()</code></td></tr>
+              <tr><td><code>AuthenticationManager</code></td><td>Nhận <code>Authentication</code> chưa xác thực → trả <code>Authentication</code> đã xác thực (hoặc ném lỗi). Thường uỷ quyền cho các <code>AuthenticationProvider</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Lấy người dùng hiện tại trong controller</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@GetMapping</span>(<span class="tok-str">"/api/me"</span>)
+<span class="tok-kw">public</span> <span class="tok-cls">Map</span>&lt;<span class="tok-cls">String</span>, <span class="tok-cls">Object</span>&gt; <span class="tok-fn">me</span>(<span class="tok-ann">@AuthenticationPrincipal</span> <span class="tok-cls">UserDetails</span> user) {      <span class="tok-com">// cách gọn nhất</span>
+    <span class="tok-kw">return</span> <span class="tok-cls">Map</span>.<span class="tok-fn">of</span>(<span class="tok-str">"username"</span>, user.<span class="tok-fn">getUsername</span>(),
+                  <span class="tok-str">"authorities"</span>, user.<span class="tok-fn">getAuthorities</span>().<span class="tok-fn">stream</span>().<span class="tok-fn">map</span>(<span class="tok-cls">GrantedAuthority</span>::getAuthority).<span class="tok-fn">toList</span>());
+}
+
+<span class="tok-com">// Hoặc, ở tầng thấp hơn:</span>
+<span class="tok-cls">Authentication</span> auth = <span class="tok-cls">SecurityContextHolder</span>.<span class="tok-fn">getContext</span>().<span class="tok-fn">getAuthentication</span>();</code></pre>
+        </div>
+
+        <h2 id="security-config">4. <code>SecurityFilterChain</code> — cấu hình hiện đại</h2>
+
+        <p>Từ Spring Security 6 (Boot 3): **<code>WebSecurityConfigurerAdapter</code> đã bị xoá<strong>. Cấu hình bằng </strong>bean <code>SecurityFilterChain</code>** và lambda DSL:</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>SecurityConfig.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Configuration</span>
+<span class="tok-ann">@EnableWebSecurity</span>
+<span class="tok-ann">@EnableMethodSecurity</span>                                       <span class="tok-com">// bật @PreAuthorize (mục 7)</span>
+<span class="tok-kw">public</span> <span class="tok-kw">class</span> <span class="tok-cls">SecurityConfig</span> {
+
+    <span class="tok-ann">@Bean</span>
+    <span class="tok-cls">SecurityFilterChain</span> <span class="tok-fn">api</span>(<span class="tok-cls">HttpSecurity</span> http) <span class="tok-kw">throws</span> <span class="tok-cls">Exception</span> {
+        http
+            .<span class="tok-fn">authorizeHttpRequests</span>(auth -&gt; auth
+                .<span class="tok-fn">requestMatchers</span>(<span class="tok-str">"/api/auth/**"</span>, <span class="tok-str">"/actuator/health"</span>).<span class="tok-fn">permitAll</span>()          <span class="tok-com">// công khai</span>
+                .<span class="tok-fn">requestMatchers</span>(<span class="tok-cls">HttpMethod</span>.<span class="tok-cls">GET</span>, <span class="tok-str">"/api/products/**"</span>).<span class="tok-fn">permitAll</span>()          <span class="tok-com">// xem sản phẩm: ai cũng được</span>
+                .<span class="tok-fn">requestMatchers</span>(<span class="tok-str">"/api/admin/**"</span>).<span class="tok-fn">hasRole</span>(<span class="tok-str">"ADMIN"</span>)                        <span class="tok-com">// chỉ admin</span>
+                .<span class="tok-fn">anyRequest</span>().<span class="tok-fn">authenticated</span>())                                            <span class="tok-com">// còn lại: phải đăng nhập</span>
+            .<span class="tok-fn">httpBasic</span>(<span class="tok-cls">Customizer</span>.<span class="tok-fn">withDefaults</span>())                                         <span class="tok-com">// chương 10 sẽ thay bằng JWT</span>
+            .<span class="tok-fn">csrf</span>(csrf -&gt; csrf.<span class="tok-fn">disable</span>())                                                 <span class="tok-com">// xem mục 8</span>
+            .<span class="tok-fn">sessionManagement</span>(s -&gt; s.<span class="tok-fn">sessionCreationPolicy</span>(<span class="tok-cls">SessionCreationPolicy</span>.<span class="tok-cls">STATELESS</span>))   <span class="tok-com">// không tạo session</span>
+            .<span class="tok-fn">cors</span>(<span class="tok-cls">Customizer</span>.<span class="tok-fn">withDefaults</span>());                                             <span class="tok-com">// dùng CorsConfigurationSource bean</span>
+        <span class="tok-kw">return</span> http.<span class="tok-fn">build</span>();
+    }
+
+    <span class="tok-ann">@Bean</span>
+    <span class="tok-cls">PasswordEncoder</span> <span class="tok-fn">passwordEncoder</span>() {
+        <span class="tok-kw">return</span> <span class="tok-kw">new</span> <span class="tok-cls">BCryptPasswordEncoder</span>();
+    }
+}</code></pre>
+        </div>
+        <div class="callout callout-gotcha">
+          <div class="callout-label">⚠️ Thứ tự quy tắc rất quan trọng</div>
+          <p><code>authorizeHttpRequests</code> khớp <strong>từ trên xuống, quy tắc đầu tiên khớp thắng</strong>. Đặt <code>anyRequest().authenticated()</code> <em>trước</em> <code>permitAll()</code> thì các URL công khai cũng bị khoá; đặt <code>permitAll("/**")</code> quá sớm là mở toang. Luôn xếp <strong>cụ thể → chung</strong> và để <code>anyRequest()</code> cuối cùng — tốt nhất là <code>denyAll()</code> hoặc <code>authenticated()</code> (mặc định an toàn: <em>cấm trừ khi cho phép</em>).</p>
+        </div>
+        <div class="java-note">
+          <h4><code>requestMatchers</code> và dấu <code>/</code></h4>
+          <p>Mặc định Spring Security 6 so khớp theo mẫu của Spring MVC (<code>MvcRequestMatcher</code> khi có Spring MVC). <code>/api/products/**</code> khớp <code>/api/products</code> và <code>/api/products/42</code>. Cẩn thận đường dẫn có và không có <code>/</code> cuối, hoặc có đuôi (<code>/api/x.json</code>): luôn <strong>thử cả các biến thể</strong> bằng <code>curl</code> và viết test (chương 11) cho các endpoint nhạy cảm.</p>
+        </div>
+
+        <h2 id="nguoi-dung">5. Người dùng trong CSDL</h2>
+
+
+        <h3 id="entity">5.1. Entity và repository</h3>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>AppUser.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Entity</span>
+<span class="tok-ann">@Table</span>(name = <span class="tok-str">"app_users"</span>)
+<span class="tok-kw">public</span> <span class="tok-kw">class</span> <span class="tok-cls">AppUser</span> {
+    <span class="tok-ann">@Id</span> <span class="tok-ann">@GeneratedValue</span>(strategy = <span class="tok-cls">GenerationType</span>.<span class="tok-cls">IDENTITY</span>) <span class="tok-kw">private</span> <span class="tok-cls">Long</span> id;
+
+    <span class="tok-ann">@Column</span>(nullable = <span class="tok-kw">false</span>, unique = <span class="tok-kw">true</span>, length = <span class="tok-num">100</span>)
+    <span class="tok-kw">private</span> <span class="tok-cls">String</span> email;
+
+    <span class="tok-ann">@Column</span>(nullable = <span class="tok-kw">false</span>)
+    <span class="tok-kw">private</span> <span class="tok-cls">String</span> passwordHash;                    <span class="tok-com">// CHỈ lưu hash — không bao giờ lưu mật khẩu gốc</span>
+
+    <span class="tok-ann">@Enumerated</span>(<span class="tok-cls">EnumType</span>.<span class="tok-cls">STRING</span>)
+    <span class="tok-ann">@ElementCollection</span>(fetch = <span class="tok-cls">FetchType</span>.<span class="tok-cls">EAGER</span>)     <span class="tok-com">// vai trò: ít, luôn cần khi đăng nhập → EAGER hợp lý ở đây</span>
+    <span class="tok-ann">@CollectionTable</span>(name = <span class="tok-str">"app_user_roles"</span>, joinColumns = <span class="tok-ann">@JoinColumn</span>(name = <span class="tok-str">"user_id"</span>))
+    <span class="tok-kw">private</span> <span class="tok-cls">Set</span>&lt;<span class="tok-cls">Role</span>&gt; roles = <span class="tok-kw">new</span> <span class="tok-cls">HashSet</span>&lt;&gt;();
+
+    <span class="tok-kw">private</span> <span class="tok-kw">boolean</span> enabled = <span class="tok-kw">true</span>;
+    <span class="tok-com">// constructor, getter ...</span>
+}
+
+<span class="tok-kw">public</span> <span class="tok-kw">enum</span> <span class="tok-cls">Role</span> { <span class="tok-cls">USER</span>, <span class="tok-cls">ADMIN</span> }
+
+<span class="tok-kw">public</span> <span class="tok-kw">interface</span> <span class="tok-cls">AppUserRepository</span> <span class="tok-kw">extends</span> <span class="tok-cls">JpaRepository</span>&lt;<span class="tok-cls">AppUser</span>, <span class="tok-cls">Long</span>&gt; {
+    <span class="tok-cls">Optional</span>&lt;<span class="tok-cls">AppUser</span>&gt; <span class="tok-fn">findByEmailIgnoreCase</span>(<span class="tok-cls">String</span> email);
+    <span class="tok-kw">boolean</span> <span class="tok-fn">existsByEmailIgnoreCase</span>(<span class="tok-cls">String</span> email);
+}</code></pre>
+        </div>
+
+        <h3 id="userdetails">5.2. <code>UserDetailsService</code> — cầu nối tới CSDL</h3>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>DbUserDetailsService.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Service</span>
+<span class="tok-kw">class</span> <span class="tok-cls">DbUserDetailsService</span> <span class="tok-kw">implements</span> <span class="tok-cls">UserDetailsService</span> {
+
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">AppUserRepository</span> users;
+    <span class="tok-cls">DbUserDetailsService</span>(<span class="tok-cls">AppUserRepository</span> users) { <span class="tok-kw">this</span>.users = users; }
+
+    <span class="tok-ann">@Override</span>
+    <span class="tok-kw">public</span> <span class="tok-cls">UserDetails</span> <span class="tok-fn">loadUserByUsername</span>(<span class="tok-cls">String</span> email) <span class="tok-kw">throws</span> <span class="tok-cls">UsernameNotFoundException</span> {
+        <span class="tok-cls">AppUser</span> u = users.<span class="tok-fn">findByEmailIgnoreCase</span>(email)
+                .<span class="tok-fn">orElseThrow</span>(() -&gt; <span class="tok-kw">new</span> <span class="tok-cls">UsernameNotFoundException</span>(<span class="tok-str">"Không tìm thấy: "</span> + email));
+
+        <span class="tok-kw">return</span> org.springframework.security.core.userdetails.<span class="tok-cls">User</span>.<span class="tok-fn">builder</span>()
+                .<span class="tok-fn">username</span>(u.<span class="tok-fn">getEmail</span>())
+                .<span class="tok-fn">password</span>(u.<span class="tok-fn">getPasswordHash</span>())                                       <span class="tok-com">// đã là hash</span>
+                .<span class="tok-fn">authorities</span>(u.<span class="tok-fn">getRoles</span>().<span class="tok-fn">stream</span>().<span class="tok-fn">map</span>(r -&gt; <span class="tok-str">"ROLE_"</span> + r.<span class="tok-fn">name</span>()).<span class="tok-fn">toArray</span>(<span class="tok-cls">String</span>[]::<span class="tok-kw">new</span>))
+                .<span class="tok-fn">disabled</span>(!u.<span class="tok-fn">isEnabled</span>())
+                .<span class="tok-fn">build</span>();
+    }
+}</code></pre>
+        </div>
+        <p>Chỉ cần có **một bean <code>UserDetailsService</code><strong> và </strong>một bean <code>PasswordEncoder</code>**, Boot tự dựng <code>DaoAuthenticationProvider</code> để dùng chúng — không cần cấu hình thêm. Khi client gửi Basic <code>user:pass</code>, provider gọi <code>loadUserByUsername</code>, rồi <code>passwordEncoder.matches(raw, hash)</code>.</p>
+
+        <h3 id="dang-ky">5.3. Đăng ký người dùng</h3>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>AuthController.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@RestController</span>
+<span class="tok-ann">@RequestMapping</span>(<span class="tok-str">"/api/auth"</span>)
+<span class="tok-kw">class</span> <span class="tok-cls">AuthController</span> {
+
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">AppUserRepository</span> users;
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">PasswordEncoder</span> encoder;
+    <span class="tok-com">// constructor ...</span>
+
+    <span class="tok-ann">@PostMapping</span>(<span class="tok-str">"/register"</span>)
+    <span class="tok-ann">@ResponseStatus</span>(<span class="tok-cls">HttpStatus</span>.<span class="tok-cls">CREATED</span>)
+    <span class="tok-kw">void</span> <span class="tok-fn">register</span>(<span class="tok-ann">@Valid</span> <span class="tok-ann">@RequestBody</span> <span class="tok-cls">RegisterRequest</span> req) {
+        <span class="tok-kw">if</span> (users.<span class="tok-fn">existsByEmailIgnoreCase</span>(req.<span class="tok-fn">email</span>()))
+            <span class="tok-kw">throw</span> <span class="tok-kw">new</span> <span class="tok-cls">ConflictException</span>(<span class="tok-str">"EMAIL_TAKEN"</span>, <span class="tok-str">"Email đã được dùng"</span>);     <span class="tok-com">// + UNIQUE ở DB (chương 5)</span>
+        <span class="tok-cls">AppUser</span> u = <span class="tok-kw">new</span> <span class="tok-cls">AppUser</span>(req.<span class="tok-fn">email</span>().<span class="tok-fn">toLowerCase</span>(), encoder.<span class="tok-fn">encode</span>(req.<span class="tok-fn">password</span>()), <span class="tok-cls">Set</span>.<span class="tok-fn">of</span>(<span class="tok-cls">Role</span>.<span class="tok-cls">USER</span>));
+        users.<span class="tok-fn">save</span>(u);
+    }
+}
+
+<span class="tok-kw">public</span> <span class="tok-kw">record</span> <span class="tok-cls">RegisterRequest</span>(<span class="tok-ann">@NotBlank</span> <span class="tok-ann">@Email</span> <span class="tok-cls">String</span> email,
+                              <span class="tok-ann">@NotBlank</span> <span class="tok-ann">@Size</span>(min = <span class="tok-num">8</span>, max = <span class="tok-num">72</span>) <span class="tok-cls">String</span> password) { }</code></pre>
+        </div>
+
+        <h2 id="mat-khau">6. Lưu mật khẩu đúng cách</h2>
+
+        <div class="java-rule"><strong>Không bao giờ lưu mật khẩu gốc, không bao giờ mã hoá hai chiều (AES) cho mật khẩu, không dùng MD5/SHA-1/SHA-256 trần.</strong> Dùng hàm băm <strong>chậm có muối</strong> được thiết kế riêng cho mật khẩu: <strong>BCrypt</strong>, <strong>Argon2</strong>, <strong>scrypt</strong>, <strong>PBKDF2</strong>.</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Thuật toán</th><th>Đặc điểm</th><th>Trong Spring</th></tr></thead>
+            <tbody>
+              <tr><td><strong>BCrypt</strong></td><td>Muối ngẫu nhiên tự gắn trong chuỗi hash; độ khó chỉnh được (<code>strength</code>, mặc định 10); giới hạn <strong>72 byte</strong> đầu vào</td><td><code>BCryptPasswordEncoder</code> — phổ biến, đủ tốt</td></tr>
+              <tr><td><strong>Argon2id</strong></td><td>Tốn bộ nhớ ⇒ kháng GPU/ASIC; khuyến nghị hiện đại của OWASP</td><td><code>Argon2PasswordEncoder</code> (cần Bouncy Castle)</td></tr>
+              <tr><td><code>DelegatingPasswordEncoder</code></td><td>Hash dạng <code>{bcrypt}$2a$10$…</code> — <strong>ghi rõ thuật toán</strong> để nâng cấp dần</td><td><code>PasswordEncoderFactories.createDelegatingPasswordEncoder()</code></td></tr>
+              <tr><td>MD5, SHA-1, SHA-256 trần</td><td>Nhanh ⇒ dò mật khẩu hàng tỉ lần/giây</td><td>❌ Đừng dùng</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Một chuỗi BCrypt</span><button class="copy-btn">Copy</button></div>
+<pre><code>$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy
+ │  │  └────────────── muối (22 ký tự) ───────────┘└──── hash (31 ký tự) ────┘
+ │  └─ cost = 10  (mỗi +1 → chậm gấp đôi)
+ └─ phiên bản thuật toán
+# Cùng một mật khẩu băm hai lần cho hai chuỗi KHÁC nhau (muối khác) — dùng encoder.matches(), không so sánh chuỗi.</code></pre>
+        </div>
+        <div class="callout callout-tip">
+          <div class="callout-label">💡 Cost phải vừa đủ chậm</div>
+          <p>Mục tiêu: một lần băm mất ~<strong>100-300 ms</strong> trên server thật. Quá nhanh ⇒ dễ bị dò; quá chậm ⇒ kẻ tấn công <em>gửi nhiều request đăng nhập</em> làm cạn CPU của bạn (DoS). Vì vậy đăng nhập cần <strong>giới hạn tốc độ</strong> (rate limit/khoá tạm thời sau N lần sai).</p>
+        </div>
+        <p>Hai chi tiết tránh lộ thông tin ở màn đăng nhập: (1) trả <strong>cùng một thông điệp</strong> <code>Email hoặc mật khẩu không đúng</code> cho cả "email không tồn tại" và "sai mật khẩu" (chống dò danh sách tài khoản); (2) thời gian phản hồi gần như nhau — Spring Security mặc định băm một mật khẩu giả khi không có user để giảm sai lệch này.</p>
+
+        <h2 id="phan-quyen">7. Phân quyền: role, authority và method security</h2>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th></th><th>Authority</th><th>Role</th></tr></thead>
+            <tbody>
+              <tr><td>Bản chất</td><td>Một quyền tinh: <code>product:write</code>, <code>order:cancel</code></td><td>Nhóm quyền thô: <code>ADMIN</code>, <code>USER</code></td></tr>
+              <tr><td>Lưu dưới dạng</td><td>Chuỗi <code>"product:write"</code></td><td>Chuỗi **<code>"ROLE_ADMIN"</code>** (có tiền tố <code>ROLE_</code>)</td></tr>
+              <tr><td>Kiểm tra</td><td><code>hasAuthority("product:write")</code></td><td><code>hasRole("ADMIN")</code> — tự thêm <code>ROLE_</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout callout-gotcha">
+          <div class="callout-label">⚠️ Bẫy <code>ROLE_</code></div>
+          <p><code>hasRole("ADMIN")</code> kiểm tra authority **<code>ROLE_ADMIN</code>**. Lưu role là <code>"ADMIN"</code> (thiếu tiền tố) thì <code>hasRole("ADMIN")</code> luôn <strong>403</strong>. Hoặc lưu <code>ROLE_ADMIN</code> và dùng <code>hasRole("ADMIN")</code>, hoặc dùng <code>hasAuthority("ADMIN")</code> nhất quán. Đừng trộn.</p>
+        </div>
+
+        <h3 id="method-security">7.1. Method security — phân quyền ở tầng service</h3>
+
+        <p>Phân quyền theo URL (<code>authorizeHttpRequests</code>) thô và dễ sót khi thêm endpoint. <strong>Method security</strong> đặt quy tắc ngay trên method (thông qua proxy — nhớ bẫy self-invocation ở chương 2):</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Method security</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Service</span>
+<span class="tok-kw">class</span> <span class="tok-cls">OrderService</span> {
+
+    <span class="tok-ann">@PreAuthorize</span>(<span class="tok-str">"hasRole('ADMIN')"</span>)                                       <span class="tok-com">// chỉ admin</span>
+    <span class="tok-kw">public</span> <span class="tok-cls">List</span>&lt;<span class="tok-cls">OrderResponse</span>&gt; <span class="tok-fn">findAll</span>() { ... }
+
+    <span class="tok-ann">@PreAuthorize</span>(<span class="tok-str">"hasAuthority('order:cancel')"</span>)
+    <span class="tok-kw">public</span> <span class="tok-kw">void</span> <span class="tok-fn">cancel</span>(<span class="tok-kw">long</span> id) { ... }
+
+    <span class="tok-com">// QUAN TRỌNG: chủ sở hữu hoặc admin — chống IDOR</span>
+    <span class="tok-ann">@PreAuthorize</span>(<span class="tok-str">"hasRole('ADMIN') or @orderSecurity.isOwner(#id, authentication.name)"</span>)
+    <span class="tok-kw">public</span> <span class="tok-cls">OrderResponse</span> <span class="tok-fn">get</span>(<span class="tok-kw">long</span> id) { ... }
+
+    <span class="tok-ann">@PostAuthorize</span>(<span class="tok-str">"returnObject.ownerEmail == authentication.name or hasRole('ADMIN')"</span>)
+    <span class="tok-kw">public</span> <span class="tok-cls">OrderResponse</span> <span class="tok-fn">getAfter</span>(<span class="tok-kw">long</span> id) { ... }                          <span class="tok-com">// kiểm tra SAU khi có kết quả</span>
+}
+
+<span class="tok-ann">@Component</span>(<span class="tok-str">"orderSecurity"</span>)
+<span class="tok-kw">class</span> <span class="tok-cls">OrderSecurity</span> {
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">OrderRepository</span> repo;
+    <span class="tok-cls">OrderSecurity</span>(<span class="tok-cls">OrderRepository</span> repo) { <span class="tok-kw">this</span>.repo = repo; }
+    <span class="tok-kw">public</span> <span class="tok-kw">boolean</span> <span class="tok-fn">isOwner</span>(<span class="tok-kw">long</span> orderId, <span class="tok-cls">String</span> email) {
+        <span class="tok-kw">return</span> repo.<span class="tok-fn">existsByIdAndCustomerEmail</span>(orderId, email);
+    }
+}</code></pre>
+        </div>
+        <div class="callout callout-warning">
+          <div class="callout-label">🔒 IDOR — lỗi phân quyền số một (OWASP A01: Broken Access Control)</div>
+          <p><strong>Insecure Direct Object Reference</strong>: <code>GET /api/orders/42</code> chỉ kiểm tra <em>đã đăng nhập</em>, không kiểm tra đơn 42 <em>có phải của bạn không</em> ⇒ người dùng đổi <code>42</code> thành <code>43</code> đọc được đơn người khác. Với mọi tài nguyên thuộc về người dùng: kiểm tra <strong>quyền sở hữu</strong> (như <code>isOwner</code> ở trên), hoặc <strong>lọc theo chủ sở hữu ngay trong truy vấn</strong> (<code>findByIdAndCustomerEmail</code>). Trả <strong>404</strong> (không phải 403) khi không phải của bạn để không lộ sự tồn tại của tài nguyên.</p>
+        </div>
+
+        <h2 id="csrf-cors">8. CSRF và CORS — hai thứ hay bị nhầm</h2>
+
+
+        <h3 id="csrf">8.1. CSRF</h3>
+
+        <p><strong>CSRF</strong> (Cross-Site Request Forgery): trang độc <code>evil.com</code> khiến trình duyệt của bạn gửi <code>POST bank.com/transfer</code> — và vì trình duyệt <strong>tự đính kèm cookie</strong> của <code>bank.com</code>, request trông như hợp lệ. Nguy cơ chỉ tồn tại khi xác thực dựa vào thứ trình duyệt <strong>tự động gửi</strong> (cookie/session, HTTP Basic được trình duyệt nhớ).</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Kiểu xác thực của API</th><th>CSRF?</th><th>Cấu hình</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Session + cookie</strong> (web truyền thống, SSR)</td><td>✅ <strong>Phải bật</strong></td><td>Giữ mặc định; form gửi kèm CSRF token</td></tr>
+              <tr><td>**Token trong header <code>Authorization: Bearer …</code><em>* (JWT, chương 10) — *không</em> dùng cookie</td><td>❌ Không áp dụng (trình duyệt không tự gắn header này)</td><td><code>csrf.disable()</code> an toàn</td></tr>
+              <tr><td>JWT <strong>lưu trong cookie</strong></td><td>✅ Vẫn cần chống CSRF</td><td><code>SameSite=Lax/Strict</code> + CSRF token</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="java-rule">**<code>csrf.disable()</code> chỉ an toàn khi API là <em>stateless</em> và không dựa vào cookie để xác thực.<em>* Tắt CSRF "cho hết lỗi 403" trên ứng dụng dùng session là mở lỗ hổng. Hãy biết *vì sao</em> bạn tắt.</div>
+
+        <h3 id="cors">8.2. CORS ≠ bảo mật server</h3>
+
+        <p><strong>CORS</strong> là chính sách của <strong>trình duyệt</strong>: cho trang ở origin A đọc phản hồi từ origin B hay không. Nó <strong>không</strong> bảo vệ API khỏi <code>curl</code>/script/ứng dụng khác — chỉ ngăn <em>trang web lạ</em> đọc dữ liệu bằng phiên của người dùng. Khi dùng Spring Security, cấu hình CORS <strong>ở đây</strong> (filter chạy trước MVC, nếu để ở MVC thì request preflight <code>OPTIONS</code> có thể bị chặn 401):</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>CORS cho Spring Security</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Bean</span>
+<span class="tok-cls">CorsConfigurationSource</span> <span class="tok-fn">corsConfigurationSource</span>() {
+    <span class="tok-cls">CorsConfiguration</span> c = <span class="tok-kw">new</span> <span class="tok-cls">CorsConfiguration</span>();
+    c.<span class="tok-fn">setAllowedOrigins</span>(<span class="tok-cls">List</span>.<span class="tok-fn">of</span>(<span class="tok-str">"http://localhost:3000"</span>, <span class="tok-str">"https://shop.example.com"</span>));   <span class="tok-com">// cụ thể, KHÔNG "*" khi có credential</span>
+    c.<span class="tok-fn">setAllowedMethods</span>(<span class="tok-cls">List</span>.<span class="tok-fn">of</span>(<span class="tok-str">"GET"</span>, <span class="tok-str">"POST"</span>, <span class="tok-str">"PUT"</span>, <span class="tok-str">"PATCH"</span>, <span class="tok-str">"DELETE"</span>, <span class="tok-str">"OPTIONS"</span>));
+    c.<span class="tok-fn">setAllowedHeaders</span>(<span class="tok-cls">List</span>.<span class="tok-fn">of</span>(<span class="tok-str">"Authorization"</span>, <span class="tok-str">"Content-Type"</span>));
+    c.<span class="tok-fn">setMaxAge</span>(<span class="tok-cls">Duration</span>.<span class="tok-fn">ofHours</span>(<span class="tok-num">1</span>));                                                    <span class="tok-com">// cache preflight</span>
+    <span class="tok-cls">UrlBasedCorsConfigurationSource</span> src = <span class="tok-kw">new</span> <span class="tok-cls">UrlBasedCorsConfigurationSource</span>();
+    src.<span class="tok-fn">registerCorsConfiguration</span>(<span class="tok-str">"/api/**"</span>, c);
+    <span class="tok-kw">return</span> src;
+}
+<span class="tok-com">// + http.cors(Customizer.withDefaults())  trong SecurityFilterChain — đã có ở mục 4</span></code></pre>
+        </div>
+
+        <h2 id="xu-ly-loi">9. 401 và 403 dạng JSON</h2>
+
+        <p>Mặc định Spring Security trả 401 với header <code>WWW-Authenticate</code> và thân rỗng/HTML; 403 thân rỗng. API nên trả **<code>ProblemDetail</code>** như phần còn lại (chương 5). Hai điểm mở rộng: <code>AuthenticationEntryPoint</code> (→ 401) và <code>AccessDeniedHandler</code> (→ 403). Chúng chạy trong filter chain, <strong>trước MVC</strong>, nên <code>@RestControllerAdvice</code> <em>không</em> bắt được — phải tự ghi response:</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>SecurityErrorHandlers.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Component</span>
+<span class="tok-kw">class</span> <span class="tok-cls">JsonAuthenticationEntryPoint</span> <span class="tok-kw">implements</span> <span class="tok-cls">AuthenticationEntryPoint</span> {
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">ObjectMapper</span> mapper;
+    <span class="tok-cls">JsonAuthenticationEntryPoint</span>(<span class="tok-cls">ObjectMapper</span> mapper) { <span class="tok-kw">this</span>.mapper = mapper; }
+
+    <span class="tok-ann">@Override</span>
+    <span class="tok-kw">public</span> <span class="tok-kw">void</span> <span class="tok-fn">commence</span>(<span class="tok-cls">HttpServletRequest</span> req, <span class="tok-cls">HttpServletResponse</span> res, <span class="tok-cls">AuthenticationException</span> ex) <span class="tok-kw">throws</span> <span class="tok-cls">IOException</span> {
+        <span class="tok-fn">write</span>(res, <span class="tok-cls">HttpStatus</span>.<span class="tok-cls">UNAUTHORIZED</span>, <span class="tok-str">"UNAUTHENTICATED"</span>, <span class="tok-str">"Cần đăng nhập hoặc token không hợp lệ/hết hạn"</span>);
+    }
+
+    <span class="tok-kw">private</span> <span class="tok-kw">void</span> <span class="tok-fn">write</span>(<span class="tok-cls">HttpServletResponse</span> res, <span class="tok-cls">HttpStatus</span> status, <span class="tok-cls">String</span> code, <span class="tok-cls">String</span> detail) <span class="tok-kw">throws</span> <span class="tok-cls">IOException</span> {
+        <span class="tok-cls">ProblemDetail</span> pd = <span class="tok-cls">ProblemDetail</span>.<span class="tok-fn">forStatusAndDetail</span>(status, detail);
+        pd.<span class="tok-fn">setProperty</span>(<span class="tok-str">"code"</span>, code);
+        res.<span class="tok-fn">setStatus</span>(status.<span class="tok-fn">value</span>());
+        res.<span class="tok-fn">setContentType</span>(<span class="tok-cls">MediaType</span>.<span class="tok-cls">APPLICATION_PROBLEM_JSON_VALUE</span>);
+        mapper.<span class="tok-fn">writeValue</span>(res.<span class="tok-fn">getOutputStream</span>(), pd);
+    }
+}
+
+<span class="tok-ann">@Component</span>
+<span class="tok-kw">class</span> <span class="tok-cls">JsonAccessDeniedHandler</span> <span class="tok-kw">implements</span> <span class="tok-cls">AccessDeniedHandler</span> {
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">ObjectMapper</span> mapper;
+    <span class="tok-cls">JsonAccessDeniedHandler</span>(<span class="tok-cls">ObjectMapper</span> mapper) { <span class="tok-kw">this</span>.mapper = mapper; }
+
+    <span class="tok-ann">@Override</span>
+    <span class="tok-kw">public</span> <span class="tok-kw">void</span> <span class="tok-fn">handle</span>(<span class="tok-cls">HttpServletRequest</span> req, <span class="tok-cls">HttpServletResponse</span> res, <span class="tok-cls">AccessDeniedException</span> ex) <span class="tok-kw">throws</span> <span class="tok-cls">IOException</span> {
+        <span class="tok-cls">ProblemDetail</span> pd = <span class="tok-cls">ProblemDetail</span>.<span class="tok-fn">forStatusAndDetail</span>(<span class="tok-cls">HttpStatus</span>.<span class="tok-cls">FORBIDDEN</span>, <span class="tok-str">"Bạn không có quyền thực hiện thao tác này"</span>);
+        pd.<span class="tok-fn">setProperty</span>(<span class="tok-str">"code"</span>, <span class="tok-str">"FORBIDDEN"</span>);
+        res.<span class="tok-fn">setStatus</span>(<span class="tok-num">403</span>);
+        res.<span class="tok-fn">setContentType</span>(<span class="tok-cls">MediaType</span>.<span class="tok-cls">APPLICATION_PROBLEM_JSON_VALUE</span>);
+        mapper.<span class="tok-fn">writeValue</span>(res.<span class="tok-fn">getOutputStream</span>(), pd);
+    }
+}
+
+<span class="tok-com">// Trong SecurityFilterChain:</span>
+<span class="tok-com">// .exceptionHandling(e -&gt; e.authenticationEntryPoint(entryPoint).accessDeniedHandler(deniedHandler))</span></code></pre>
+        </div>
+        <div class="callout callout-note">
+          <div class="callout-label">📌 Exception ném từ <code>@PreAuthorize</code> thì sao?</div>
+          <p><code>@PreAuthorize</code> chạy <em>bên trong</em> MVC (qua proxy) nên <code>AccessDeniedException</code> đi qua <code>@RestControllerAdvice</code> — thêm <code>@ExceptionHandler(AccessDeniedException.class)</code> trả 403 ở đó (hoặc để nó "nổi" lên <code>ExceptionTranslationFilter</code> — nhưng khi đã có <code>@ExceptionHandler(Exception.class)</code> chung, nó sẽ bị nuốt thành 500!). Đây là bẫy rất hay gặp: **luôn xử lý <code>AccessDeniedException</code> và <code>AuthenticationException</code> riêng**.</p>
+        </div>
+
+        <h2 id="owasp">10. Danh sách kiểm tra bảo mật (OWASP)</h2>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Rủi ro (OWASP Top 10)</th><th>Biểu hiện trong Spring</th><th>Phòng</th></tr></thead>
+            <tbody>
+              <tr><td><strong>A01 Broken Access Control</strong></td><td>IDOR; thiếu <code>@PreAuthorize</code>; endpoint admin quên khoá</td><td>Kiểm tra sở hữu; mặc định <code>authenticated()</code>/<code>denyAll()</code>; test phân quyền</td></tr>
+              <tr><td><strong>A02 Cryptographic Failures</strong></td><td>Mật khẩu băm yếu/lưu thô; thiếu HTTPS</td><td>BCrypt/Argon2; HTTPS bắt buộc; HSTS</td></tr>
+              <tr><td><strong>A03 Injection</strong></td><td>Nối chuỗi vào <code>@Query</code>/SQL</td><td>Tham số bind (chương 6)</td></tr>
+              <tr><td><strong>A05 Security Misconfiguration</strong></td><td><code>/actuator/**</code> mở; Swagger công khai; lỗi chi tiết</td><td>Chỉ mở <code>health</code>; tắt Swagger prod; chương 5 &amp; 3</td></tr>
+              <tr><td><strong>A07 Identification &amp; Authentication Failures</strong></td><td>Mật khẩu yếu; không giới hạn thử; lộ "email tồn tại"</td><td>Chính sách mật khẩu; rate limit; thông điệp chung</td></tr>
+              <tr><td><strong>A09 Logging Failures</strong></td><td>Không log đăng nhập thất bại; log cả mật khẩu/token</td><td>Log sự kiện bảo mật, che dữ liệu nhạy cảm</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <ul>
+          <li><strong>HTTPS ở mọi nơi</strong> (kết thúc TLS ở reverse proxy/load balancer; bật <code>server.forward-headers-strategy=framework</code> để Spring biết request gốc là https).</li>
+          <li><strong>Giữ phụ thuộc cập nhật</strong> — chạy <code>./mvnw dependency-check:check</code> (OWASP Dependency-Check) hoặc Dependabot trong CI.</li>
+          <li><strong>Nguyên tắc ít quyền nhất</strong>: tài khoản CSDL của ứng dụng không cần quyền <code>DROP</code>; vai trò mặc định <code>USER</code>, <code>ADMIN</code> cấp thủ công.</li>
+        </ul>
+
+        <h2 id="cheat-sheet">11. Cheat sheet chương 9</h2>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Cần gì</th><th>Làm gì</th></tr></thead>
+            <tbody>
+              <tr><td>Cấu hình</td><td>Bean <code>SecurityFilterChain</code> + <code>authorizeHttpRequests</code> (cụ thể → chung)</td></tr>
+              <tr><td>Người dùng từ DB</td><td><code>UserDetailsService</code> + <code>PasswordEncoder</code> (BCrypt/Argon2/Delegating)</td></tr>
+              <tr><td>Role kiểm tra</td><td><code>hasRole("ADMIN")</code> ⇔ authority <code>ROLE_ADMIN</code></td></tr>
+              <tr><td>Phân quyền chi tiết</td><td><code>@EnableMethodSecurity</code> + <code>@PreAuthorize("… or @bean.method(#id, authentication.name)")</code></td></tr>
+              <tr><td>API stateless</td><td><code>SessionCreationPolicy.STATELESS</code> + <code>csrf.disable()</code> (chỉ khi không dùng cookie)</td></tr>
+              <tr><td>Trình duyệt khác origin</td><td><code>CorsConfigurationSource</code> + <code>http.cors()</code></td></tr>
+              <tr><td>401/403 dạng JSON</td><td><code>AuthenticationEntryPoint</code> + <code>AccessDeniedHandler</code></td></tr>
+              <tr><td>Chống IDOR</td><td>Kiểm tra sở hữu; trả 404 khi không phải của bạn</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="bai-tap">Bài tập</h2>
+
+        <div class="exercises">
+
+          <div class="exercise">
+            <h4>Khám phá cấu hình mặc định</h4>
+            <div class="exercise-body">
+              <p>Thêm <code>spring-boot-starter-security</code> vào dự án đang chạy. Không viết cấu hình gì.</p>
+              <ul>
+                <li>Gọi các endpoint cũ: kết quả gì? Lấy mật khẩu từ log và gọi bằng <code>curl -u</code>.</li>
+                <li>Bật <code>logging.level.org.springframework.security=DEBUG</code> — liệt kê các filter trong chuỗi.</li>
+                <li>Đặt <code>spring.security.user.name/password</code> để cố định tài khoản dev.</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Log DEBUG in <code>Security filter chain: [DisableEncodeUrlFilter, WebAsyncManagerIntegrationFilter, SecurityContextHolderFilter, HeaderWriterFilter, CsrfFilter, … AuthorizationFilter]</code>. Bạn sẽ thấy <code>CsrfFilter</code> — vì sao <code>POST</code> bằng <code>curl</code> bị 403 khi chưa tắt CSRF?</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Đăng ký, đăng nhập (Basic) với CSDL</h4>
+            <div class="exercise-body">
+              <p>Cài <code>AppUser</code>, <code>DbUserDetailsService</code>, <code>POST /api/auth/register</code>, <code>GET /api/me</code> (HTTP Basic).</p>
+              <ul>
+                <li>Xem cột <code>password_hash</code> trong DB — nó trông thế nào? Đăng ký hai user cùng mật khẩu: hash có giống nhau không?</li>
+                <li>Gọi <code>/api/me</code> đúng/sai mật khẩu: mã trả về? Thông điệp?</li>
+                <li>Viết test nhỏ <code>encoder.matches(raw, hash)</code>.</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Hai hash khác nhau (muối ngẫu nhiên) nhưng cùng <code>matches</code> được với mật khẩu gốc. Sai mật khẩu ⇒ 401 — thông điệp không tiết lộ email có tồn tại hay không.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Phân quyền ba tầng</h4>
+            <div class="exercise-body">
+              <p>Có <code>GET /api/products</code> (công khai), <code>POST /api/products</code> (ADMIN), <code>GET /api/orders/{id}</code> (chủ đơn hoặc ADMIN).</p>
+              <ul>
+                <li>Cấu hình URL-level cho hai cái đầu và method security cho cái thứ ba.</li>
+                <li>Đăng nhập là <code>user1</code>, thử đọc đơn của <code>user2</code>: kết quả? Đổi thành trả 404 thay vì 403.</li>
+                <li>Cố tình sắp xếp sai thứ tự trong <code>authorizeHttpRequests</code> (đặt <code>anyRequest</code> trước) — quan sát.</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Với IDOR: truy vấn <code>findByIdAndCustomerEmail(id, email)</code> trả <code>Optional.empty()</code> khi không phải chủ ⇒ <code>NotFoundException</code> ⇒ 404. Khi sai thứ tự, các quy tắc đứng sau <code>anyRequest()</code> không bao giờ được áp dụng (Spring còn ném lỗi cấu hình khi build trong nhiều trường hợp).</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>401 và 403 dạng <code>ProblemDetail</code></h4>
+            <div class="exercise-body">
+              <p>Cài <code>AuthenticationEntryPoint</code> và <code>AccessDeniedHandler</code> như mục 9 và đăng ký vào <code>exceptionHandling</code>.</p>
+              <ul>
+                <li>Gọi không có thông tin đăng nhập ⇒ 401 JSON; đăng nhập USER gọi <code>/api/admin/x</code> ⇒ 403 JSON.</li>
+                <li>Thêm <code>@PreAuthorize("hasRole('ADMIN')")</code> lên một method service và gọi ⇒ thấy gì? Xử lý bằng <code>@ExceptionHandler</code>.</li>
+                <li>Giải thích vì sao <code>@RestControllerAdvice</code> không bắt được lỗi ở entry point.</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Entry point/handler chạy trong filter chain (trước <code>DispatcherServlet</code>) nên nằm ngoài phạm vi <code>@ControllerAdvice</code>. <code>@PreAuthorize</code> thì chạy trong MVC — nhớ bắt <code>AccessDeniedException</code> <em>trước</em> handler <code>Exception.class</code>.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Kiểm toán bảo mật</h4>
+            <div class="exercise-body">
+              <p>Cho cấu hình sau, nêu <strong>ít nhất 5 điểm yếu</strong> và sửa:</p>
+              <div class="code-wrap">
+                <div class="code-meta"><span>SecurityConfig.java</span><button class="copy-btn">Copy</button></div>
+<pre><code>http.<span class="tok-fn">csrf</span>(c -&gt; c.<span class="tok-fn">disable</span>())
+    .<span class="tok-fn">authorizeHttpRequests</span>(a -&gt; a
+        .<span class="tok-fn">requestMatchers</span>(<span class="tok-str">"/**"</span>).<span class="tok-fn">permitAll</span>()
+        .<span class="tok-fn">requestMatchers</span>(<span class="tok-str">"/api/admin/**"</span>).<span class="tok-fn">hasRole</span>(<span class="tok-str">"ADMIN"</span>))
+    .<span class="tok-fn">httpBasic</span>(<span class="tok-cls">Customizer</span>.<span class="tok-fn">withDefaults</span>());
+<span class="tok-com">// application.yml:  management.endpoints.web.exposure.include: "*"</span>
+<span class="tok-com">// PasswordEncoder: NoOpPasswordEncoder.getInstance()</span>
+<span class="tok-com">// CorsConfiguration: allowedOrigins("*") + allowCredentials(true)</span></code></pre>
+              </div>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>(1) <code>permitAll("/**")</code> đứng trước ⇒ quy tắc ADMIN vô nghĩa; (2) Actuator mở hết; (3) <code>NoOpPasswordEncoder</code> lưu mật khẩu thô; (4) CORS <code>*</code> + credentials (trình duyệt cũng chặn nhưng cấu hình sai); (5) tắt CSRF mà vẫn dùng Basic (trình duyệt tự gửi) — nếu API cho trình duyệt thì cần xem lại; (6) thiếu <code>anyRequest().authenticated()</code> cuối cùng.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+        </div>
+
+        <h2 id="quiz">Quiz</h2>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q1</span>
+            <div class="quiz-q-text"><p>401 khác 403 thế nào?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p><strong>401</strong>: chưa xác thực — thiếu/sai/hết hạn thông tin đăng nhập ("bạn là ai?"). <strong>403</strong>: đã xác thực nhưng không đủ quyền ("không được phép"). Client xử lý khác nhau: 401 → đăng nhập lại/refresh token; 403 → báo không có quyền.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q2</span>
+            <div class="quiz-q-text"><p>Mô tả vị trí của Spring Security trong đường đi của request.</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Là một **chuỗi <code>Filter</code>** (<code>FilterChainProxy</code>) chạy <em>trước</em> <code>DispatcherServlet</code>: nạp <code>SecurityContext</code> → filter xác thực → <code>ExceptionTranslationFilter</code> → <code>AuthorizationFilter</code>. Request bị từ chối ở đây không bao giờ tới controller. Vì vậy 401/403 từ filter không đi qua <code>@RestControllerAdvice</code>.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q3</span>
+            <div class="quiz-q-text"><p>Vì sao dùng BCrypt thay vì SHA-256 để lưu mật khẩu?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>SHA-256 <strong>nhanh</strong> ⇒ kẻ tấn công thử hàng tỉ mật khẩu/giây (GPU). BCrypt/Argon2 cố tình <strong>chậm và có muối ngẫu nhiên</strong> (cùng mật khẩu → hash khác nhau, chống rainbow table); độ khó chỉnh được theo phần cứng. Phải dùng <code>encoder.matches()</code> để so khớp.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q4</span>
+            <div class="quiz-q-text"><p><code>hasRole("ADMIN")</code> và <code>hasAuthority("ADMIN")</code> khác nhau thế nào?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p><code>hasRole("ADMIN")</code> tự thêm tiền tố và kiểm tra authority **<code>ROLE_ADMIN</code>**; <code>hasAuthority("ADMIN")</code> kiểm tra chuỗi **<code>ADMIN</code>** đúng nguyên văn. Lưu <code>ADMIN</code> rồi dùng <code>hasRole</code> sẽ luôn 403 — phải nhất quán.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q5</span>
+            <div class="quiz-q-text"><p>Khi nào được phép <code>csrf.disable()</code>?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Khi API <strong>stateless và không xác thực bằng cookie</strong> (token trong header <code>Authorization</code>) — trình duyệt không tự gắn header đó nên CSRF không áp dụng. Với session/cookie (kể cả JWT trong cookie) CSRF vẫn cần được bật hoặc thay bằng <code>SameSite</code> + token.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q6</span>
+            <div class="quiz-q-text"><p>IDOR là gì và phòng thế nào?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Truy cập tài nguyên của người khác bằng cách đổi id (<code>/orders/42</code> → <code>/43</code>) vì server chỉ kiểm tra <em>đã đăng nhập</em> mà không kiểm tra <em>sở hữu</em>. Phòng: kiểm tra quyền sở hữu mỗi truy cập (<code>@PreAuthorize</code> với bean kiểm tra, hoặc truy vấn lọc theo chủ sở hữu), trả 404 để không lộ sự tồn tại, và viết test phân quyền cho từng endpoint.</p>
+            </div>
+          </details>
+        </div>
+
+        <h2 id="tong-ket">Tổng kết</h2>
+
+        <p>Sau chương 9, bạn đã nắm:</p>
+        <ul>
+          <li><strong>Xác thực</strong> = bạn là ai (401); <strong>phân quyền</strong> = được làm gì (403). Spring Security là <strong>chuỗi filter</strong> chạy trước <code>DispatcherServlet</code>.</li>
+          <li>Cấu hình bằng bean **<code>SecurityFilterChain</code>** (lambda DSL); quy tắc <code>authorizeHttpRequests</code> khớp <strong>cụ thể → chung</strong>, kết thúc <code>anyRequest().authenticated()</code>.</li>
+          <li>Người dùng từ DB qua **<code>UserDetailsService</code><strong> + </strong><code>PasswordEncoder</code><strong>; mật khẩu băm bằng </strong>BCrypt/Argon2**, thông điệp đăng nhập chung chung.</li>
+          <li><strong>Role</strong> = authority có tiền tố <code>ROLE_</code>; <strong>method security</strong> <code>@PreAuthorize</code> cho phân quyền mịn; <strong>kiểm tra sở hữu để chống IDOR</strong>.</li>
+          <li><strong>CSRF</strong> chỉ tắt cho API stateless không dùng cookie; <strong>CORS</strong> là chính sách trình duyệt, cấu hình trong Security.</li>
+          <li><strong>401/403 dạng JSON</strong> qua <code>AuthenticationEntryPoint</code>/<code>AccessDeniedHandler</code>; bắt <code>AccessDeniedException</code> riêng cho method security.</li>
+        </ul>
+
+        <h2 id="ket-noi">Kết nối</h2>
+        <ul>
+          <li><strong>Chương 10</strong> — thay HTTP Basic bằng <strong>JWT</strong>: một filter xác thực mới chèn vào chính chuỗi này; refresh token; OAuth2.</li>
+          <li><strong>Chương 2 (proxy)</strong> — <code>@PreAuthorize</code> cũng là proxy ⇒ bẫy self-invocation y hệt <code>@Transactional</code>.</li>
+          <li><strong>Chương 5</strong> — <code>ProblemDetail</code> cho lỗi bảo mật; xử lý <code>AccessDeniedException</code>.</li>
+          <li><strong>Chương 11</strong> — <code>@WithMockUser</code>, <code>spring-security-test</code>, kiểm thử IDOR và quy tắc URL.</li>
+          <li><strong>Networking chương 6 &amp; 9</strong> — HTTPS/TLS, cookie, JWT, OAuth: nền tảng lý thuyết của chương này.</li>
+          <li><strong>Fullstack-ContactCenter C4 &amp; E5</strong> — JWT/RBAC và Guard trong NestJS: so sánh với Security filter.</li>
+          <li><strong>DevOps chương 12 (DevSecOps)</strong> — quét phụ thuộc, quản lý bí mật.</li>
+        </ul>
+
+        <nav class="chapter-nav">
+          <a href="chuong8.html" class="prev">
+            <div class="dir">← Chương 8</div>
+            <div class="label">Kiến trúc tầng, DTO &amp;amp; OpenAPI</div>
+          </a>
+          <a href="chuong10.html" class="next">
+            <div class="dir">Chương 10 →</div>
+            <div class="label">JWT &amp;amp; OAuth2</div>
+          </a>
+        </nav>
+
+      </main>
+
+      <aside class="toc">
+        <div class="toc-label">Trong chương này</div>
+        <ul>
+          <li><a href="#khai-niem">1. Hai câu hỏi khác nhau</a></li>
+          <li><a href="#mac-dinh">2. Thêm starter — chuyện gì xảy ra?</a></li>
+          <li><a href="#filter-chain">3. Kiến trúc: một chuỗi filter</a></li>
+          <li class="level-3"><a href="#context">3.1. Ba khái niệm lõi</a></li>
+          <li><a href="#security-config">4. <code>SecurityFilterChain</code> — cấu hình hiện đại</a></li>
+          <li><a href="#nguoi-dung">5. Người dùng trong CSDL</a></li>
+          <li class="level-3"><a href="#entity">5.1. Entity và repository</a></li>
+          <li class="level-3"><a href="#userdetails">5.2. <code>UserDetailsService</code> — cầu nối tới CSDL</a></li>
+          <li class="level-3"><a href="#dang-ky">5.3. Đăng ký người dùng</a></li>
+          <li><a href="#mat-khau">6. Lưu mật khẩu đúng cách</a></li>
+          <li><a href="#phan-quyen">7. Phân quyền: role, authority và method security</a></li>
+          <li class="level-3"><a href="#method-security">7.1. Method security — phân quyền ở tầng service</a></li>
+          <li><a href="#csrf-cors">8. CSRF và CORS — hai thứ hay bị nhầm</a></li>
+          <li class="level-3"><a href="#csrf">8.1. CSRF</a></li>
+          <li class="level-3"><a href="#cors">8.2. CORS ≠ bảo mật server</a></li>
+          <li><a href="#xu-ly-loi">9. 401 và 403 dạng JSON</a></li>
+          <li><a href="#owasp">10. Danh sách kiểm tra bảo mật (OWASP)</a></li>
+          <li><a href="#cheat-sheet">11. Cheat sheet chương 9</a></li>
+          <li><a href="#bai-tap">Bài tập</a></li>
+          <li><a href="#quiz">Quiz</a></li>
+          <li><a href="#tong-ket">Tổng kết</a></li>
+          <li><a href="#ket-noi">Kết nối</a></li>
+        </ul>
+      </aside>
+
+    </div>
+  </div>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p>
+        Chương 9 — Spring Security · Spring Boot sub-pillar · Pillar 9 IT Basic<br/>
+        <a href="chuong8.html">← Chương 8</a> · <a href="../index.html">Spring Boot TOC</a> · <a href="chuong10.html">Chương 10 →</a>
+      </p>
+    </div>
+  </footer>
+
+  <script src="../../shared/js/chapter.js"></script>
+</body>
+</html>

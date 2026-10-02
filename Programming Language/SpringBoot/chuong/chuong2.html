@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chương 2 — IoC &amp; Dependency Injection — trái tim của Spring · Spring Boot Sub-pillar</title>
+  <meta name="description" content="Inversion of Control, Dependency Injection, ApplicationContext, bean, stereotype annotation, @Configuration/@Bean, constructor injection, @Primary/@Qualifier, scope, vòng đời bean, phụ thuộc vòng và cơ chế proxy." />
+  <meta name="theme-color" content="#4a9a28" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Bitter:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="../../shared/css/base.css">
+  <link rel="stylesheet" href="../css/theme.css">
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="container">
+      <a class="site-logo" href="../../../index.html">
+        <span class="mark mark-spring">Sb</span>
+        Spring Boot · IT Basic
+      </a>
+      <nav>
+        <ul class="site-nav">
+          <li><a href="../../../index.html">IT Basic</a></li>
+          <li><a href="../../index.html">Pillar 9</a></li>
+          <li><a href="../../Java/index.html">Java</a></li>
+          <li><a href="../index.html" class="active">Spring Boot</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <div class="container">
+    <header class="chapter-header">
+      <div class="breadcrumb">
+        <a href="../../../index.html">IT Basic</a><span class="sep">/</span>
+        <a href="../../index.html">Pillar 9</a><span class="sep">/</span>
+        <a href="../index.html">Spring Boot</a><span class="sep">/</span>
+        <span>Chương 2</span>
+      </div>
+      <div class="chapter-num">Chương 02 · IoC &amp; DI</div>
+      <h1 style="font-size: 2.6rem; margin: 0 0 12px; color: var(--ink);">
+        IoC &amp; Dependency Injection — trái tim của Spring
+      </h1>
+      <p class="lead">
+        Mọi thứ trong Spring xoay quanh một ý tưởng: **đừng tự <code>new</code> những thứ bạn phụ thuộc — hãy khai báo bạn cần gì, và để container đưa cho bạn**. Đó là <em>Inversion of Control</em> (đảo ngược quyền kiểm soát) và hình thức phổ biến nhất của nó, <em>Dependency Injection</em>. Hiểu chương này là hiểu 80% cách Spring vận hành: <code>@Transactional</code>, <code>@Cacheable</code>, security, controller — tất cả đều là bean do container tạo và "bọc" lại.
+      </p>
+      <div class="chapter-meta">
+        <span class="item"><strong>Bài tập:</strong> 5</span>
+        <span class="item"><strong>Quiz:</strong> 6</span>
+        <span class="item"><strong>Prerequisites:</strong> Chương 1-1</span>
+      </div>
+    </header>
+
+    <div class="layout">
+
+      <main class="prose">
+
+        <div class="callout callout-goal">
+          <div class="callout-label">🎯 Mục tiêu chương</div>
+          <ul>
+            <li>Giải thích <strong>IoC</strong> và <strong>DI</strong> — vấn đề chúng giải quyết, bằng ví dụ <em>không</em> dùng Spring.</li>
+            <li>Hiểu <code>ApplicationContext</code> và <strong>bean</strong> là gì.</li>
+            <li>Khai báo bean bằng <strong>stereotype</strong> (<code>@Component</code>, <code>@Service</code>, <code>@Repository</code>) và bằng <code>@Configuration</code> + <code>@Bean</code>.</li>
+            <li>Chọn đúng kiểu tiêm: <strong>constructor</strong> (mặc định), setter, field (tránh) — và biết lý do.</li>
+            <li>Xử lý nhiều bean cùng kiểu: <code>@Primary</code>, <code>@Qualifier</code>, tiêm <code>List</code>/<code>Map</code>.</li>
+            <li>Nắm <strong>scope</strong> (singleton, prototype, request) và cái bẫy thread-safety của singleton.</li>
+            <li>Vẽ được <strong>vòng đời bean</strong>; dùng <code>@PostConstruct</code>, <code>@PreDestroy</code>.</li>
+            <li>Hiểu <strong>phụ thuộc vòng</strong> và <strong>proxy</strong> (nền của <code>@Transactional</code>).</li>
+          </ul>
+        </div>
+
+        <h2 id="van-de">1. Vấn đề: tự tạo phụ thuộc</h2>
+
+        <p>Xem một service gửi thông báo đơn hàng, <strong>không dùng Spring</strong>:</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>DonHangService.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-kw">public</span> <span class="tok-kw">class</span> <span class="tok-cls">DonHangService</span> {
+
+    <span class="tok-com">// ❌ Tự tạo phụ thuộc → dính chặt vào một cài đặt cụ thể</span>
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">EmailSender</span> sender = <span class="tok-kw">new</span> <span class="tok-cls">SmtpEmailSender</span>(<span class="tok-str">"smtp.example.com"</span>, <span class="tok-num">587</span>, <span class="tok-str">"user"</span>, <span class="tok-str">"pass"</span>);
+
+    <span class="tok-kw">public</span> <span class="tok-kw">void</span> <span class="tok-fn">datHang</span>(<span class="tok-cls">DonHang</span> dh) {
+        <span class="tok-com">// ... lưu đơn ...</span>
+        sender.<span class="tok-fn">gui</span>(dh.<span class="tok-fn">emailKhach</span>(), <span class="tok-str">"Đặt hàng thành công"</span>);
+    }
+}</code></pre>
+        </div>
+        <p>Ba vấn đề lộ ra ngay:</p>
+        <ul>
+          <li><strong>Không test được.</strong> Test <code>datHang</code> sẽ gửi email thật. Không có chỗ nào để thay bằng bản giả.</li>
+          <li><strong>Không đổi được.</strong> Muốn đổi sang SendGrid? Sửa mọi nơi có <code>new SmtpEmailSender(...)</code>.</li>
+          <li><strong>Lộ chi tiết.</strong> <code>DonHangService</code> phải biết host, port, mật khẩu SMTP — chuyện không liên quan tới nó.</li>
+        </ul>
+
+        <h3 id="di-tay">1.1. Giải pháp: nhận phụ thuộc từ bên ngoài</h3>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>DonHangService.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-kw">public</span> <span class="tok-kw">class</span> <span class="tok-cls">DonHangService</span> {
+
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">EmailSender</span> sender;                 <span class="tok-com">// phụ thuộc vào GIAO DIỆN, không phải lớp cụ thể</span>
+
+    <span class="tok-kw">public</span> <span class="tok-cls">DonHangService</span>(<span class="tok-cls">EmailSender</span> sender) {       <span class="tok-com">// "đưa" từ ngoài vào qua constructor</span>
+        <span class="tok-kw">this</span>.sender = sender;
+    }
+    <span class="tok-com">// ...</span>
+}
+
+<span class="tok-com">// Nơi duy nhất biết ghép gì với gì ("composition root"):</span>
+<span class="tok-cls">EmailSender</span> sender = <span class="tok-kw">new</span> <span class="tok-cls">SmtpEmailSender</span>(<span class="tok-str">"smtp.example.com"</span>, <span class="tok-num">587</span>, <span class="tok-str">"user"</span>, <span class="tok-str">"pass"</span>);
+<span class="tok-cls">DonHangService</span> service = <span class="tok-kw">new</span> <span class="tok-cls">DonHangService</span>(sender);
+
+<span class="tok-com">// Trong test:</span>
+<span class="tok-cls">DonHangService</span> test = <span class="tok-kw">new</span> <span class="tok-cls">DonHangService</span>(<span class="tok-kw">new</span> <span class="tok-cls">FakeEmailSender</span>());</code></pre>
+        </div>
+        <div class="java-rule"><strong>Dependency Injection</strong> = một đối tượng <em>nhận</em> phụ thuộc từ ngoài thay vì tự tạo. <strong>Inversion of Control</strong> = quyền quyết định "dùng cài đặt nào, tạo lúc nào, huỷ lúc nào" chuyển từ code của bạn sang một thành phần khác (container). Bạn đã làm DI ở trên mà không cần framework — Spring chỉ <strong>tự động hoá</strong> việc ghép.</div>
+        <p>Với 3 lớp thì ghép tay ổn. Với 300 lớp, mỗi lớp cần 3-5 phụ thuộc, có vòng đời khác nhau, cần bọc transaction/cache/bảo mật — bạn cần một container làm việc đó. Đó là Spring.</p>
+
+        <h2 id="container">2. IoC container và bean</h2>
+
+        <p>**<code>ApplicationContext</code><strong> là container của Spring. Nó (1) nắm danh sách <em>định nghĩa bean</em>, (2) tạo bean theo đúng thứ tự phụ thuộc, (3) tiêm chúng vào nhau, (4) quản lý vòng đời tới lúc tắt. </strong>Bean** đơn giản là <em>một object do container quản lý</em>.</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Dùng context thủ công (chỉ để hiểu — ít khi viết thế này)</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-cls">ConfigurableApplicationContext</span> ctx = <span class="tok-cls">SpringApplication</span>.<span class="tok-fn">run</span>(<span class="tok-cls">DemoApplication</span>.<span class="tok-kw">class</span>, args);
+
+<span class="tok-cls">DonHangService</span> s = ctx.<span class="tok-fn">getBean</span>(<span class="tok-cls">DonHangService</span>.<span class="tok-kw">class</span>);   <span class="tok-com">// lấy bean theo kiểu</span>
+<span class="tok-cls">String</span>[] ten = ctx.<span class="tok-fn">getBeanDefinitionNames</span>();             <span class="tok-com">// liệt kê mọi bean (hàng trăm do Boot tạo)</span>
+<span class="tok-cls">System</span>.out.<span class="tok-fn">println</span>(ten.length + <span class="tok-str">" bean"</span>);</code></pre>
+        </div>
+        <div class="callout callout-note">
+          <div class="callout-label">📌 Đừng gọi <code>getBean()</code> trong code nghiệp vụ</div>
+          <p>Gọi <code>ctx.getBean()</code> là <em>Service Locator</em> — bạn tự đi lấy phụ thuộc, mất lợi ích của DI (phụ thuộc bị giấu, khó test). Hãy khai báo phụ thuộc ở constructor và để Spring tiêm.</p>
+        </div>
+
+        <h2 id="khai-bao-bean">3. Khai báo bean</h2>
+
+
+        <h3 id="stereotype">3.1. Stereotype annotation — cho code của bạn</h3>
+
+        <p>Đặt annotation lên lớp; <code>@ComponentScan</code> (có sẵn trong <code>@SpringBootApplication</code>) tự phát hiện:</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Annotation</th><th>Tầng</th><th>Ghi chú</th></tr></thead>
+            <tbody>
+              <tr><td><code>@Component</code></td><td>Bất kỳ</td><td>Annotation gốc — các cái dưới đều là <code>@Component</code> đặc biệt</td></tr>
+              <tr><td><code>@Service</code></td><td>Nghiệp vụ</td><td>Chỉ mang ý nghĩa ngữ nghĩa (không thêm hành vi)</td></tr>
+              <tr><td><code>@Repository</code></td><td>Truy cập dữ liệu</td><td>Thêm <strong>dịch exception</strong> của JDBC/JPA thành <code>DataAccessException</code></td></tr>
+              <tr><td><code>@Controller</code> / <code>@RestController</code></td><td>Web</td><td><code>@RestController</code> = <code>@Controller</code> + <code>@ResponseBody</code></td></tr>
+              <tr><td><code>@Configuration</code></td><td>Cấu hình</td><td>Chứa các method <code>@Bean</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>ThongBaoService.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-kw">public</span> <span class="tok-kw">interface</span> <span class="tok-cls">EmailSender</span> {
+    <span class="tok-kw">void</span> <span class="tok-fn">gui</span>(<span class="tok-cls">String</span> den, <span class="tok-cls">String</span> noiDung);
+}
+
+<span class="tok-ann">@Component</span>
+<span class="tok-kw">class</span> <span class="tok-cls">SmtpEmailSender</span> <span class="tok-kw">implements</span> <span class="tok-cls">EmailSender</span> {
+    <span class="tok-ann">@Override</span>
+    <span class="tok-kw">public</span> <span class="tok-kw">void</span> <span class="tok-fn">gui</span>(<span class="tok-cls">String</span> den, <span class="tok-cls">String</span> noiDung) { <span class="tok-com">/* gửi SMTP thật */</span> }
+}
+
+<span class="tok-ann">@Service</span>
+<span class="tok-kw">public</span> <span class="tok-kw">class</span> <span class="tok-cls">DonHangService</span> {
+
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">EmailSender</span> sender;
+
+    <span class="tok-kw">public</span> <span class="tok-cls">DonHangService</span>(<span class="tok-cls">EmailSender</span> sender) {   <span class="tok-com">// Spring thấy kiểu EmailSender → tìm bean → tiêm</span>
+        <span class="tok-kw">this</span>.sender = sender;
+    }
+}</code></pre>
+        </div>
+
+        <h3 id="bean-method">3.2. <code>@Configuration</code> + <code>@Bean</code> — cho code bạn <em>không sở hữu</em></h3>
+
+        <p>Bạn không thể đặt <code>@Component</code> lên <code>ObjectMapper</code>, <code>RestClient</code>, <code>HikariDataSource</code>… vì đó là lớp của thư viện. Hãy dùng method <code>@Bean</code>:</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>AppConfig.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Configuration</span>
+<span class="tok-kw">public</span> <span class="tok-kw">class</span> <span class="tok-cls">AppConfig</span> {
+
+    <span class="tok-ann">@Bean</span>
+    <span class="tok-kw">public</span> <span class="tok-cls">RestClient</span> <span class="tok-fn">paymentClient</span>(<span class="tok-ann">@Value</span>(<span class="tok-str">"${payment.base-url}"</span>) <span class="tok-cls">String</span> baseUrl) {
+        <span class="tok-kw">return</span> <span class="tok-cls">RestClient</span>.<span class="tok-fn">builder</span>()
+                .<span class="tok-fn">baseUrl</span>(baseUrl)
+                .<span class="tok-fn">defaultHeader</span>(<span class="tok-str">"Accept"</span>, <span class="tok-str">"application/json"</span>)
+                .<span class="tok-fn">build</span>();
+    }
+
+    <span class="tok-ann">@Bean</span>
+    <span class="tok-kw">public</span> <span class="tok-cls">Clock</span> <span class="tok-fn">clock</span>() {                 <span class="tok-com">// đóng gói thời gian để test được (chương 11)</span>
+        <span class="tok-kw">return</span> <span class="tok-cls">Clock</span>.<span class="tok-fn">systemUTC</span>();
+    }
+}</code></pre>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Dùng <code>@Component</code>/<code>@Service</code> khi</th><th>Dùng <code>@Bean</code> khi</th></tr></thead>
+            <tbody>
+              <tr><td>Lớp do <strong>bạn</strong> viết</td><td>Lớp của <strong>thư viện</strong></td></tr>
+              <tr><td>Cấu hình đơn giản, cần quét tự động</td><td>Cần logic tạo phức tạp / tham số tuỳ biến</td></tr>
+              <tr><td>Mặc định cho 95% trường hợp</td><td>Cấu hình hạ tầng (client, mapper, clock…)</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="java-note">
+          <h4><code>@Configuration</code> được "bọc" (CGLIB) để giữ singleton</h4>
+          <p>Trong lớp <code>@Configuration</code>, nếu method <code>@Bean</code> này gọi method <code>@Bean</code> kia, Spring chặn lời gọi và trả về <strong>bean đã có</strong> thay vì chạy lại method.</p>
+          <div class="code-wrap">
+            <div class="code-meta"><span>Bean method gọi nhau</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Configuration</span>
+<span class="tok-kw">class</span> <span class="tok-cls">C</span> {
+    <span class="tok-ann">@Bean</span> <span class="tok-cls">A</span> <span class="tok-fn">a</span>() { <span class="tok-kw">return</span> <span class="tok-kw">new</span> <span class="tok-cls">A</span>(<span class="tok-fn">b</span>()); }   <span class="tok-com">// b() trả về CÙNG bean B với bean "b" bên dưới</span>
+    <span class="tok-ann">@Bean</span> <span class="tok-cls">B</span> <span class="tok-fn">b</span>() { <span class="tok-kw">return</span> <span class="tok-kw">new</span> <span class="tok-cls">B</span>(); }
+}</code></pre>
+          </div>
+          <p>Chế độ này tên là <em>full mode</em>. <code>@Configuration(proxyBeanMethods = false)</code> tắt việc bọc để khởi động nhanh hơn — chỉ an toàn khi các method <code>@Bean</code> không gọi nhau (Boot dùng cách này cho auto-config).</p>
+        </div>
+
+        <h2 id="tiem">4. Ba kiểu tiêm phụ thuộc</h2>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>Ba cách</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Service</span>
+<span class="tok-kw">class</span> <span class="tok-cls">A</span> {
+    <span class="tok-com">// (1) CONSTRUCTOR — khuyến nghị</span>
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">B</span> b;
+    <span class="tok-cls">A</span>(<span class="tok-cls">B</span> b) { <span class="tok-kw">this</span>.b = b; }                    <span class="tok-com">// 1 constructor → không cần @Autowired</span>
+}
+
+<span class="tok-ann">@Service</span>
+<span class="tok-kw">class</span> <span class="tok-cls">A2</span> {
+    <span class="tok-com">// (2) SETTER — cho phụ thuộc TUỲ CHỌN / có thể đổi</span>
+    <span class="tok-kw">private</span> <span class="tok-cls">B</span> b;
+    <span class="tok-ann">@Autowired</span>(required = <span class="tok-kw">false</span>)
+    <span class="tok-kw">void</span> <span class="tok-fn">setB</span>(<span class="tok-cls">B</span> b) { <span class="tok-kw">this</span>.b = b; }
+}
+
+<span class="tok-ann">@Service</span>
+<span class="tok-kw">class</span> <span class="tok-cls">A3</span> {
+    <span class="tok-com">// (3) FIELD — tránh dùng</span>
+    <span class="tok-ann">@Autowired</span> <span class="tok-kw">private</span> <span class="tok-cls">B</span> b;                   <span class="tok-com">// ngắn, nhưng nhiều tác hại</span>
+}</code></pre>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th></th><th>Constructor</th><th>Setter</th><th>Field</th></tr></thead>
+            <tbody>
+              <tr><td>Trường <code>final</code> (bất biến)</td><td>✅</td><td>❌</td><td>❌</td></tr>
+              <tr><td>Thấy rõ phụ thuộc</td><td>✅ ngay chữ ký</td><td>⚠️</td><td>❌ ẩn bên trong</td></tr>
+              <tr><td>Test không cần Spring</td><td>✅ <code>new A(fake)</code></td><td>✅</td><td>❌ phải dùng reflection / <code>@InjectMocks</code></td></tr>
+              <tr><td>Đối tượng luôn đầy đủ khi tạo xong</td><td>✅</td><td>❌ có thể thiếu</td><td>❌ có thể <code>null</code></td></tr>
+              <tr><td>Phát hiện phụ thuộc vòng sớm</td><td>✅ lúc khởi động</td><td>❌ che giấu</td><td>❌ che giấu</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="java-rule"><strong>Mặc định: constructor injection.</strong> Nếu constructor có quá nhiều tham số (≥ 5) đó là <em>tín hiệu thiết kế</em>: lớp đang làm quá nhiều việc — hãy tách, đừng chuyển sang field injection để "giấu" nó.</div>
+        <p>Tuỳ chọn gọn hơn cho lớp có nhiều trường: dùng <strong>record</strong> cho DTO nhưng với bean thì giữ constructor tường minh. (Lombok <code>@RequiredArgsConstructor</code> cũng sinh constructor cho các trường <code>final</code>; chấp nhận được nếu đội đã dùng Lombok.)</p>
+
+        <h2 id="nhieu-bean">5. Nhiều bean cùng kiểu</h2>
+
+        <p>Giả sử có hai cài đặt:</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Hai cài đặt</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-kw">public</span> <span class="tok-kw">interface</span> <span class="tok-cls">ThanhToan</span> { <span class="tok-cls">String</span> <span class="tok-fn">ten</span>(); <span class="tok-kw">void</span> <span class="tok-fn">tra</span>(<span class="tok-kw">long</span> soTien); }
+
+<span class="tok-ann">@Component</span> <span class="tok-kw">class</span> <span class="tok-cls">ThanhToanMomo</span>  <span class="tok-kw">implements</span> <span class="tok-cls">ThanhToan</span> { <span class="tok-com">/* ... */</span> }
+<span class="tok-ann">@Component</span> <span class="tok-kw">class</span> <span class="tok-cls">ThanhToanVnPay</span> <span class="tok-kw">implements</span> <span class="tok-cls">ThanhToan</span> { <span class="tok-com">/* ... */</span> }
+
+<span class="tok-ann">@Service</span>
+<span class="tok-kw">class</span> <span class="tok-cls">DonHangService</span> {
+    <span class="tok-cls">DonHangService</span>(<span class="tok-cls">ThanhToan</span> tt) { }       <span class="tok-com">// 💥 NoUniqueBeanDefinitionException: có 2 ứng viên</span>
+}</code></pre>
+        </div>
+        <p>Lỗi <em>"expected single matching bean but found 2"</em> — Spring không đoán. Ba cách giải:</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Giải pháp</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-com">// (a) @Primary — "mặc định" khi không chỉ rõ</span>
+<span class="tok-ann">@Component</span> <span class="tok-ann">@Primary</span> <span class="tok-kw">class</span> <span class="tok-cls">ThanhToanMomo</span> <span class="tok-kw">implements</span> <span class="tok-cls">ThanhToan</span> { }
+
+<span class="tok-com">// (b) @Qualifier — chọn đích danh theo tên bean</span>
+<span class="tok-ann">@Service</span>
+<span class="tok-kw">class</span> <span class="tok-cls">DonHangService</span> {
+    <span class="tok-cls">DonHangService</span>(<span class="tok-ann">@Qualifier</span>(<span class="tok-str">"thanhToanVnPay"</span>) <span class="tok-cls">ThanhToan</span> tt) { }
+}
+
+<span class="tok-com">// (c) Tiêm TẤT CẢ rồi tự chọn lúc chạy — mẫu Strategy</span>
+<span class="tok-ann">@Service</span>
+<span class="tok-kw">class</span> <span class="tok-cls">ThanhToanFacade</span> {
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">Map</span>&lt;<span class="tok-cls">String</span>, <span class="tok-cls">ThanhToan</span>&gt; theoTen;
+
+    <span class="tok-cls">ThanhToanFacade</span>(<span class="tok-cls">List</span>&lt;<span class="tok-cls">ThanhToan</span>&gt; tatCa) {                       <span class="tok-com">// Spring tiêm mọi bean kiểu ThanhToan</span>
+        <span class="tok-kw">this</span>.theoTen = tatCa.<span class="tok-fn">stream</span>().<span class="tok-fn">collect</span>(<span class="tok-cls">Collectors</span>.<span class="tok-fn">toMap</span>(<span class="tok-cls">ThanhToan</span>::ten, t -&gt; t));
+    }
+
+    <span class="tok-kw">void</span> <span class="tok-fn">tra</span>(<span class="tok-cls">String</span> phuongThuc, <span class="tok-kw">long</span> soTien) {
+        <span class="tok-cls">ThanhToan</span> t = theoTen.<span class="tok-fn">get</span>(phuongThuc);
+        <span class="tok-kw">if</span> (t == <span class="tok-kw">null</span>) <span class="tok-kw">throw</span> <span class="tok-kw">new</span> <span class="tok-cls">IllegalArgumentException</span>(<span class="tok-str">"Không hỗ trợ: "</span> + phuongThuc);
+        t.<span class="tok-fn">tra</span>(soTien);
+    }
+}</code></pre>
+        </div>
+        <div class="callout callout-tip">
+          <div class="callout-label">💡 Cách (c) là mẫu Strategy không <code>if/else</code></div>
+          <p>Thêm phương thức thanh toán mới = thêm một lớp <code>@Component</code>; <strong>không sửa</strong> <code>ThanhToanFacade</code> (Open/Closed — SOLID ở sub-pillar OOP). Cũng có thể tiêm <code>Map&lt;String, ThanhToan&gt;</code> trực tiếp: khoá là <em>tên bean</em>. Thứ tự trong <code>List</code> điều khiển bằng <code>@Order</code>.</p>
+        </div>
+
+        <h2 id="scope">6. Scope — bean sống bao lâu?</h2>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Scope</th><th>Số instance</th><th>Dùng cho</th></tr></thead>
+            <tbody>
+              <tr><td>**<code>singleton</code>** (mặc định)</td><td>1 / container</td><td>Service, repository, controller — <em>không giữ trạng thái</em></td></tr>
+              <tr><td><code>prototype</code></td><td>1 / mỗi lần xin</td><td>Đối tượng có trạng thái, dùng một lần</td></tr>
+              <tr><td><code>request</code></td><td>1 / HTTP request</td><td>Dữ liệu gắn request (web)</td></tr>
+              <tr><td><code>session</code></td><td>1 / HTTP session</td><td>Giỏ hàng trong session (hiếm với REST)</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout callout-warning">
+          <div class="callout-label">⚠️ Bẫy lớn nhất của singleton: trạng thái dùng chung</div>
+          <p>Một bean singleton được <strong>mọi request/thread dùng chung</strong>. Nếu nó có field thay đổi được, bạn có <em>race condition</em>.</p>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>SaiLam.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Service</span>
+<span class="tok-kw">class</span> <span class="tok-cls">DemService</span> {
+    <span class="tok-kw">private</span> <span class="tok-kw">int</span> soLanGoi = <span class="tok-num">0</span>;                    <span class="tok-com">// ❌ trạng thái dùng chung giữa mọi request</span>
+
+    <span class="tok-kw">public</span> <span class="tok-kw">int</span> <span class="tok-fn">tang</span>() { <span class="tok-kw">return</span> ++soLanGoi; }     <span class="tok-com">// 2 thread đồng thời → mất cập nhật</span>
+}
+
+<span class="tok-com">// ✅ Cách đúng: service KHÔNG giữ trạng thái người dùng. Đếm thật thì:</span>
+<span class="tok-ann">@Service</span>
+<span class="tok-kw">class</span> <span class="tok-cls">DemService2</span> {
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">AtomicInteger</span> soLanGoi = <span class="tok-kw">new</span> <span class="tok-cls">AtomicInteger</span>();   <span class="tok-com">// thread-safe</span>
+    <span class="tok-kw">public</span> <span class="tok-kw">int</span> <span class="tok-fn">tang</span>() { <span class="tok-kw">return</span> soLanGoi.<span class="tok-fn">incrementAndGet</span>(); }
+}</code></pre>
+        </div>
+        <p>Quy tắc thực dụng: <strong>service/repository/controller không có field mutable</strong>; mọi dữ liệu theo từng request đi qua tham số và biến cục bộ. (Chương 12 của sub-pillar Java về đa luồng giải thích vì sao.)</p>
+
+        <h2 id="vong-doi">7. Vòng đời của một bean</h2>
+
+        <div class="jvm-flow">
+          <div class="stages">
+            <div class="stage"><div class="stage-title">1. Khởi tạo</div><div class="stage-content">Gọi constructor (tiêm constructor xảy ra ở đây)</div></div>
+            <div class="stage blue"><div class="stage-title">2. Tiêm phụ thuộc</div><div class="stage-content">Setter / field injection</div></div>
+            <div class="stage"><div class="stage-title">3. Aware &amp; BeanPostProcessor (trước)</div><div class="stage-content"><code>BeanNameAware</code>, … rồi <code>postProcessBefore…</code></div></div>
+            <div class="stage blue"><div class="stage-title">4. <code>@PostConstruct</code></div><div class="stage-content">Khởi tạo của bạn: mọi phụ thuộc đã sẵn sàng</div></div>
+            <div class="stage"><div class="stage-title">5. BeanPostProcessor (sau)</div><div class="stage-content"><strong>Nơi tạo proxy</strong> cho <code>@Transactional</code>, <code>@Cacheable</code>…</div></div>
+            <div class="stage blue"><div class="stage-title">6. Sẵn sàng sử dụng</div><div class="stage-content">Sống cùng container</div></div>
+            <div class="stage"><div class="stage-title">7. <code>@PreDestroy</code></div><div class="stage-content">Container đóng: dọn dẹp tài nguyên</div></div>
+          </div>
+          <div class="caption">Với bean singleton, bước 1-5 chạy một lần lúc khởi động.</div>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>VongDoi.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Component</span>
+<span class="tok-kw">public</span> <span class="tok-kw">class</span> <span class="tok-cls">CacheLoader</span> {
+
+    <span class="tok-kw">private</span> <span class="tok-kw">static</span> <span class="tok-kw">final</span> <span class="tok-cls">Logger</span> log = <span class="tok-cls">LoggerFactory</span>.<span class="tok-fn">getLogger</span>(<span class="tok-cls">CacheLoader</span>.<span class="tok-kw">class</span>);
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">ProductRepository</span> repo;
+
+    <span class="tok-kw">public</span> <span class="tok-cls">CacheLoader</span>(<span class="tok-cls">ProductRepository</span> repo) {
+        <span class="tok-kw">this</span>.repo = repo;
+        log.<span class="tok-fn">info</span>(<span class="tok-str">"1. constructor — repo đã có, nhưng đừng dùng DB ở đây"</span>);
+    }
+
+    <span class="tok-ann">@PostConstruct</span>                            <span class="tok-com">// jakarta.annotation.PostConstruct (Boot 3)</span>
+    <span class="tok-kw">void</span> <span class="tok-fn">khoiTao</span>() {
+        log.<span class="tok-fn">info</span>(<span class="tok-str">"4. @PostConstruct — nạp cache"</span>);
+    }
+
+    <span class="tok-ann">@PreDestroy</span>
+    <span class="tok-kw">void</span> <span class="tok-fn">don</span>() {
+        log.<span class="tok-fn">info</span>(<span class="tok-str">"7. @PreDestroy — flush &amp; đóng kết nối"</span>);
+    }
+}</code></pre>
+        </div>
+        <p>Hai công cụ liên quan: <code>@Lazy</code> (chỉ tạo bean khi lần đầu cần — giảm thời gian khởi động nhưng đẩy lỗi cấu hình ra <em>lúc chạy</em>) và <code>ApplicationRunner</code>/<code>CommandLineRunner</code> (chạy code sau khi context đã sẵn sàng, hợp với seed dữ liệu).</p>
+
+        <h2 id="vong">8. Phụ thuộc vòng</h2>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>Vòng</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Service</span> <span class="tok-kw">class</span> <span class="tok-cls">A</span> { <span class="tok-cls">A</span>(<span class="tok-cls">B</span> b) { } }
+<span class="tok-ann">@Service</span> <span class="tok-kw">class</span> <span class="tok-cls">B</span> { <span class="tok-cls">B</span>(<span class="tok-cls">A</span> a) { } }       <span class="tok-com">// A cần B, B cần A → không thể tạo cái nào trước</span></code></pre>
+        </div>
+        <p>Từ Spring Boot 2.6, tham chiếu vòng <strong>bị cấm mặc định</strong> — khởi động thất bại với thông báo <code>The dependencies of some of the beans in the application context form a cycle</code>. Đừng bật <code>spring.main.allow-circular-references=true</code> để "cho qua": vòng là <strong>tín hiệu thiết kế sai</strong>. Cách gỡ:</p>
+        <ul>
+          <li><strong>Tách một lớp thứ ba</strong> C chứa phần chung mà cả A và B cần; A→C, B→C.</li>
+          <li><strong>Đảo hướng bằng sự kiện</strong> (<code>ApplicationEventPublisher</code>): A phát sự kiện, B lắng nghe — không còn tham chiếu trực tiếp.</li>
+          <li><strong>Giao diện hẹp</strong>: A chỉ cần một khả năng nhỏ của B — định nghĩa interface nhỏ đó.</li>
+          <li>Cách cuối cùng: <code>@Lazy</code> ở một tham số để tiêm proxy trễ — vá, không phải chữa.</li>
+        </ul>
+
+        <h2 id="proxy">9. Proxy — vì sao <code>@Transactional</code> hoạt động (và khi nào không)</h2>
+
+        <p>Khi bạn viết <code>@Transactional</code>, <code>@Cacheable</code>, <code>@Async</code>, <code>@PreAuthorize</code>…, Spring không sửa code của bạn. Ở bước 5 của vòng đời, nó <strong>bọc bean trong một proxy</strong> chặn lời gọi method: chạy logic phụ (mở transaction, kiểm quyền…) rồi mới gọi method thật.</p>
+        <div class="jvm-flow">
+          <div class="stages">
+            <div class="stage"><div class="stage-title">Controller</div><div class="stage-content">gọi <code>service.chuyenTien()</code></div></div>
+            <div class="stage blue"><div class="stage-title">Proxy (do Spring tạo)</div><div class="stage-content">mở transaction, kiểm tra cache/quyền</div></div>
+            <div class="stage"><div class="stage-title">Bean thật</div><div class="stage-content">chạy method của bạn</div></div>
+            <div class="stage blue"><div class="stage-title">Proxy</div><div class="stage-content">commit / rollback</div></div>
+          </div>
+          <div class="caption">Controller <em>không</em> giữ bean thật mà giữ proxy — nên mọi lời gọi từ ngoài đều đi qua nó.</div>
+        </div>
+        <div class="callout callout-gotcha">
+          <div class="callout-label">⚠️ Self-invocation — bẫy kinh điển</div>
+          <p>Gọi method <code>@Transactional</code> từ <em>method khác trong cùng lớp</em> (<code>this.chuyenTien()</code>) <strong>không qua proxy</strong> ⇒ annotation bị bỏ qua.</p>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>SelfInvocation.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Service</span>
+<span class="tok-kw">class</span> <span class="tok-cls">BaoCaoService</span> {
+
+    <span class="tok-kw">public</span> <span class="tok-kw">void</span> <span class="tok-fn">xuatBaoCao</span>() {
+        <span class="tok-com">// ...</span>
+        <span class="tok-fn">luuKetQua</span>();                       <span class="tok-com">// ❌ gọi qua `this`, KHÔNG qua proxy → không có transaction</span>
+    }
+
+    <span class="tok-ann">@Transactional</span>
+    <span class="tok-kw">public</span> <span class="tok-kw">void</span> <span class="tok-fn">luuKetQua</span>() { <span class="tok-com">/* ... */</span> }
+}
+
+<span class="tok-com">// ✅ Sửa: tách sang bean khác, gọi từ ngoài vào</span>
+<span class="tok-ann">@Service</span> <span class="tok-kw">class</span> <span class="tok-cls">BaoCaoService</span> { <span class="tok-cls">BaoCaoLuu</span> luu; <span class="tok-kw">void</span> <span class="tok-fn">xuatBaoCao</span>() { luu.<span class="tok-fn">luuKetQua</span>(); } }
+<span class="tok-ann">@Service</span> <span class="tok-kw">class</span> <span class="tok-cls">BaoCaoLuu</span>     { <span class="tok-ann">@Transactional</span> <span class="tok-kw">public</span> <span class="tok-kw">void</span> <span class="tok-fn">luuKetQua</span>() { <span class="tok-com">/* ... */</span> } }</code></pre>
+        </div>
+        <p>Ngoài ra proxy chỉ chặn được method **<code>public</code><strong> và lớp </strong>không <code>final</code>** (CGLIB cần kế thừa). Chương 7 sẽ quay lại với <code>@Transactional</code> chi tiết.</p>
+
+        <h2 id="cheat-sheet">10. Cheat sheet chương 2</h2>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Tình huống</th><th>Làm gì</th></tr></thead>
+            <tbody>
+              <tr><td>Lớp của mình, cần container quản lý</td><td><code>@Component</code> / <code>@Service</code> / <code>@Repository</code></td></tr>
+              <tr><td>Lớp của thư viện</td><td><code>@Bean</code> trong <code>@Configuration</code></td></tr>
+              <tr><td>Tiêm phụ thuộc</td><td>Constructor; trường <code>final</code></td></tr>
+              <tr><td>2+ bean cùng kiểu</td><td><code>@Primary</code> (mặc định) / <code>@Qualifier</code> (đích danh) / tiêm <code>List</code>, <code>Map</code> (Strategy)</td></tr>
+              <tr><td>Service có field thay đổi</td><td>🚩 Sai — tách trạng thái ra khỏi singleton</td></tr>
+              <tr><td><code>@Transactional</code> không chạy</td><td>Self-invocation? method không public? lớp <code>final</code>?</td></tr>
+              <tr><td>Vòng phụ thuộc</td><td>Tách lớp / dùng sự kiện — đừng bật <code>allow-circular-references</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="bai-tap">Bài tập</h2>
+
+        <div class="exercises">
+
+          <div class="exercise">
+            <h4>Từ <code>new</code> sang DI</h4>
+            <div class="exercise-body">
+              <p>Cho đoạn code dưới đây, hãy: (1) viết interface <code>ThongBao</code> và hai cài đặt <code>Email</code>, <code>Sms</code>; (2) refactor <code>DonHangService</code> nhận <code>ThongBao</code> qua constructor; (3) viết <strong>unit test không dùng Spring</strong> với một <code>ThongBao</code> giả.</p>
+              <div class="code-wrap">
+                <div class="code-meta"><span>Trước</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-kw">class</span> <span class="tok-cls">DonHangService</span> {
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">SmsSender</span> sms = <span class="tok-kw">new</span> <span class="tok-cls">SmsSender</span>(<span class="tok-str">"api-key"</span>);
+    <span class="tok-kw">void</span> <span class="tok-fn">datHang</span>(<span class="tok-cls">DonHang</span> d) { <span class="tok-com">/* ... */</span> sms.<span class="tok-fn">gui</span>(d.<span class="tok-fn">sdt</span>(), <span class="tok-str">"Đã đặt hàng"</span>); }
+}</code></pre>
+              </div>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Test không cần Spring: <code>new DonHangService(daGui::add)</code> nếu <code>ThongBao</code> là interface một method (functional interface) — lambda là bản giả. Đó là lợi ích lớn nhất của constructor injection.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Strategy bằng <code>List</code>/<code>Map</code></h4>
+            <div class="exercise-body">
+              <p>Xây <code>PhiVanChuyenService</code> tính phí theo hãng (<code>GHN</code>, <code>GHTK</code>, <code>VIETTEL</code>). Mỗi hãng là một bean <code>PhiVanChuyen</code>. <code>PhiVanChuyenService.tinh(hang, khoiLuong)</code> chọn đúng bean — **không dùng <code>if/else</code>**.</p>
+              <ul>
+                <li>Dùng <code>Map&lt;String, PhiVanChuyen&gt;</code> tiêm trực tiếp.</li>
+                <li>Thêm hãng thứ 4 mà không sửa <code>PhiVanChuyenService</code>.</li>
+                <li>Hãng lạ → ném <code>IllegalArgumentException</code> có thông điệp rõ.</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Tên bean mặc định là tên lớp viết thường chữ đầu (<code>ghn</code>). Muốn khoá khác, <code>@Component("GHN")</code>. Hoặc cho interface một method <code>ma()</code> và tự dựng map từ <code>List</code>.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Tìm và sửa race condition</h4>
+            <div class="exercise-body">
+              <p>Viết <code>@Service</code> <code>BoDemTruyCap</code> với field <code>int dem</code> và method <code>tang()</code>. Viết test gọi <code>tang()</code> 10.000 lần từ 8 thread (<code>ExecutorService</code>).</p>
+              <ul>
+                <li>Quan sát kết quả cuối — có bằng 10.000 không?</li>
+                <li>Sửa bằng <code>AtomicInteger</code>. Rồi nêu cách khác nếu <em>cần giữ trạng thái theo người dùng</em>.</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Nếu cần trạng thái theo người dùng, đừng giữ trong singleton: lưu ở CSDL/Redis (chương 12) hoặc <code>request</code>/<code>session</code> scope. <code>AtomicInteger</code> chỉ hợp cho bộ đếm toàn cục.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Gỡ phụ thuộc vòng</h4>
+            <div class="exercise-body">
+              <p>Tạo <code>UserService</code> (cần <code>OrderService</code> để đếm đơn của user) và <code>OrderService</code> (cần <code>UserService</code> để kiểm tra user tồn tại). Chạy — đọc thông báo lỗi — rồi gỡ vòng bằng <strong>hai cách khác nhau</strong>.</p>
+              <ul>
+                <li>Cách 1: tách <code>UserLookup</code> (chỉ đọc user) dùng chung.</li>
+                <li>Cách 2: <code>OrderService</code> phát <code>OrderCreatedEvent</code>; <code>UserStatsListener</code> lắng nghe.</li>
+                <li>So sánh ưu/nhược.</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Cách 1 đơn giản, giữ gọi đồng bộ. Cách 2 tách rời hẳn nhưng luồng khó theo dõi hơn (ẩn trong listener) và mặc định chạy cùng thread/transaction của bên phát (<code>@TransactionalEventListener</code> nếu cần sau commit).</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Bắt tận tay self-invocation</h4>
+            <div class="exercise-body">
+              <p>Viết service có <code>public void a()</code> (không <code>@Transactional</code>) gọi <code>b()</code> có <code>@Transactional</code>. In ra <code>TransactionSynchronizationManager.isActualTransactionActive()</code> trong <code>b()</code>.</p>
+              <ul>
+                <li>Gọi <code>a()</code> từ controller: transaction có bật không?</li>
+                <li>Gọi <code>b()</code> thẳng từ controller: kết quả?</li>
+                <li>Sửa để <code>a()</code> → <code>b()</code> vẫn có transaction (hai cách).</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Gọi qua <code>this</code> ⇒ <code>false</code>; gọi <code>b()</code> từ ngoài ⇒ <code>true</code>. Sửa: chuyển <code>b()</code> sang bean khác; hoặc đặt <code>@Transactional</code> lên <code>a()</code>; (cách thứ ba, ít dùng: tiêm chính nó/<code>AopContext.currentProxy()</code>).</p>
+                </div>
+              </details>
+            </div>
+          </div>
+        </div>
+
+        <h2 id="quiz">Quiz</h2>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q1</span>
+            <div class="quiz-q-text"><p>IoC và DI khác nhau thế nào?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p><strong>IoC</strong> là nguyên lý rộng: quyền kiểm soát việc tạo &amp; kết nối đối tượng chuyển từ code của bạn sang container. <strong>DI</strong> là <em>kỹ thuật</em> hiện thực IoC: đối tượng nhận phụ thuộc từ ngoài (qua constructor/setter) thay vì tự <code>new</code>. Spring dùng DI để thực thi IoC.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q2</span>
+            <div class="quiz-q-text"><p>Vì sao nên dùng constructor injection thay vì field injection?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <ul>
+                <li>Trường <code>final</code> → bất biến, thread-safe hơn.</li>
+                <li>Phụ thuộc hiện rõ trong chữ ký; quá nhiều tham số lộ ra lớp làm quá nhiều việc.</li>
+                <li>Unit test không cần Spring: <code>new A(fake)</code>.</li>
+                <li>Phụ thuộc vòng bị phát hiện ngay lúc khởi động.</li>
+              </ul>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q3</span>
+            <div class="quiz-q-text"><p>Có hai bean cùng kiểu <code>ThanhToan</code>. Cách nào để Spring biết chọn bean nào?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p><code>@Primary</code> (bean mặc định), <code>@Qualifier("tên")</code> (chọn đích danh), hoặc tiêm <code>List&lt;ThanhToan&gt;</code>/<code>Map&lt;String, ThanhToan&gt;</code> để tự chọn lúc chạy (mẫu Strategy). Tên tham số trùng tên bean cũng có thể được dùng làm gợi ý nhưng mong manh — không nên dựa vào.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q4</span>
+            <div class="quiz-q-text"><p>Vì sao bean singleton không nên giữ trạng thái theo từng người dùng?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Singleton chỉ có <strong>một instance</strong> cho cả ứng dụng, mọi request/thread cùng truy cập. Field thay đổi được ⇒ race condition và rò dữ liệu giữa người dùng. Trạng thái theo request đi qua tham số/biến cục bộ; trạng thái bền lưu ở CSDL/cache.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q5</span>
+            <div class="quiz-q-text"><p><code>@Transactional</code> hoạt động nhờ cơ chế nào? Nêu một trường hợp nó <em>không</em> hoạt động.</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Spring bọc bean trong <strong>proxy</strong> (tạo ở <code>BeanPostProcessor</code>); proxy mở/đóng transaction quanh lời gọi method. Không chạy khi <strong>self-invocation</strong> (gọi <code>this.method()</code> trong cùng lớp — không qua proxy), khi method không <code>public</code>, hoặc lớp <code>final</code> (CGLIB không kế thừa được).</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q6</span>
+            <div class="quiz-q-text"><p>Phụ thuộc vòng xử lý thế nào? Vì sao không nên bật <code>allow-circular-references</code>?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Gỡ bằng thiết kế: tách lớp chung, dùng sự kiện, hoặc interface hẹp. Từ Boot 2.6 vòng bị cấm mặc định vì nó là <strong>dấu hiệu thiết kế sai</strong>; bật lại chỉ che lỗi (bean có thể được tiêm khi mới khởi tạo dở).</p>
+            </div>
+          </details>
+        </div>
+
+        <h2 id="tong-ket">Tổng kết</h2>
+
+        <p>Sau chương 2, bạn đã nắm:</p>
+        <ul>
+          <li><strong>DI</strong>: nhận phụ thuộc từ ngoài; <strong>IoC</strong>: container nắm quyền tạo/nối/huỷ. Ghép tay cũng là DI — Spring chỉ tự động hoá.</li>
+          <li>**<code>ApplicationContext</code><strong> chứa các </strong>bean**; stereotype (<code>@Component</code>, <code>@Service</code>, <code>@Repository</code>) cho lớp của bạn, **<code>@Bean</code>** cho lớp thư viện.</li>
+          <li><strong>Constructor injection</strong> + trường <code>final</code> là mặc định; field injection nên tránh.</li>
+          <li>Nhiều bean cùng kiểu: **<code>@Primary</code><strong>, </strong><code>@Qualifier</code>**, hoặc tiêm <code>List</code>/<code>Map</code> (Strategy).</li>
+          <li><strong>Singleton</strong> là mặc định ⇒ không giữ trạng thái người dùng; <code>prototype</code>/<code>request</code>/<code>session</code> cho nhu cầu riêng.</li>
+          <li>Vòng đời: constructor → tiêm → <code>@PostConstruct</code> → dùng → <code>@PreDestroy</code>.</li>
+          <li><strong>Phụ thuộc vòng</strong> là lỗi thiết kế; <strong>proxy</strong> là nền của <code>@Transactional</code>/<code>@Cacheable</code> — và self-invocation là bẫy.</li>
+        </ul>
+
+        <h2 id="ket-noi">Kết nối</h2>
+        <ul>
+          <li><strong>Chương 1</strong> — <code>@ComponentScan</code>/auto-config chính là thứ đăng ký bean cho container này.</li>
+          <li><strong>Chương 3</strong> — <code>@Value</code>, <code>@ConfigurationProperties</code> tiêm <em>cấu hình</em> vào bean; <code>@Profile</code> bật/tắt bean theo môi trường.</li>
+          <li><strong>Chương 7</strong> — <code>@Transactional</code> chi tiết: propagation, isolation, rollback rule — tất cả đứng trên proxy.</li>
+          <li><strong>Chương 9</strong> — Security là một chuỗi bean <code>Filter</code>; <code>@PreAuthorize</code> cũng là proxy.</li>
+          <li><strong>Chương 11</strong> — DI cho phép test: <code>@MockBean</code>/<code>@MockitoBean</code> thay bean thật bằng bản giả.</li>
+          <li><strong>OOP chương 2 (SOLID)</strong> — Dependency Inversion chính là lý do ta phụ thuộc vào interface.</li>
+          <li><strong>Fullstack-ContactCenter E1-E2</strong> — DI &amp; module trong NestJS: cùng ý tưởng, cú pháp decorator.</li>
+        </ul>
+
+        <nav class="chapter-nav">
+          <a href="chuong1.html" class="prev">
+            <div class="dir">← Chương 1</div>
+            <div class="label">Hello Spring Boot</div>
+          </a>
+          <a href="chuong3.html" class="next">
+            <div class="dir">Chương 3 →</div>
+            <div class="label">Cấu hình &amp;amp; Profiles</div>
+          </a>
+        </nav>
+
+      </main>
+
+      <aside class="toc">
+        <div class="toc-label">Trong chương này</div>
+        <ul>
+          <li><a href="#van-de">1. Vấn đề: tự tạo phụ thuộc</a></li>
+          <li class="level-3"><a href="#di-tay">1.1. Giải pháp: nhận phụ thuộc từ bên ngoài</a></li>
+          <li><a href="#container">2. IoC container và bean</a></li>
+          <li><a href="#khai-bao-bean">3. Khai báo bean</a></li>
+          <li class="level-3"><a href="#stereotype">3.1. Stereotype annotation — cho code của bạn</a></li>
+          <li class="level-3"><a href="#bean-method">3.2. <code>@Configuration</code> + <code>@Bean</code> — cho code bạn <em>không sở hữu</em></a></li>
+          <li><a href="#tiem">4. Ba kiểu tiêm phụ thuộc</a></li>
+          <li><a href="#nhieu-bean">5. Nhiều bean cùng kiểu</a></li>
+          <li><a href="#scope">6. Scope — bean sống bao lâu?</a></li>
+          <li><a href="#vong-doi">7. Vòng đời của một bean</a></li>
+          <li><a href="#vong">8. Phụ thuộc vòng</a></li>
+          <li><a href="#proxy">9. Proxy — vì sao <code>@Transactional</code> hoạt động (và khi nào không)</a></li>
+          <li><a href="#cheat-sheet">10. Cheat sheet chương 2</a></li>
+          <li><a href="#bai-tap">Bài tập</a></li>
+          <li><a href="#quiz">Quiz</a></li>
+          <li><a href="#tong-ket">Tổng kết</a></li>
+          <li><a href="#ket-noi">Kết nối</a></li>
+        </ul>
+      </aside>
+
+    </div>
+  </div>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p>
+        Chương 2 — IoC &amp;amp; Dependency Injection · Spring Boot sub-pillar · Pillar 9 IT Basic<br/>
+        <a href="chuong1.html">← Chương 1</a> · <a href="../index.html">Spring Boot TOC</a> · <a href="chuong3.html">Chương 3 →</a>
+      </p>
+    </div>
+  </footer>
+
+  <script src="../../shared/js/chapter.js"></script>
+</body>
+</html>

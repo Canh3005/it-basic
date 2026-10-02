@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chương 3 — Cấu hình &amp; Profiles — một bản build, nhiều môi trường · Spring Boot Sub-pillar</title>
+  <meta name="description" content="application.properties và YAML, thứ tự ưu tiên của externalized configuration, @Value, @ConfigurationProperties với record, profiles dev/test/prod, biến môi trường và quản lý bí mật." />
+  <meta name="theme-color" content="#4a9a28" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Bitter:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="../../shared/css/base.css">
+  <link rel="stylesheet" href="../css/theme.css">
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="container">
+      <a class="site-logo" href="../../../index.html">
+        <span class="mark mark-spring">Sb</span>
+        Spring Boot · IT Basic
+      </a>
+      <nav>
+        <ul class="site-nav">
+          <li><a href="../../../index.html">IT Basic</a></li>
+          <li><a href="../../index.html">Pillar 9</a></li>
+          <li><a href="../../Java/index.html">Java</a></li>
+          <li><a href="../index.html" class="active">Spring Boot</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <div class="container">
+    <header class="chapter-header">
+      <div class="breadcrumb">
+        <a href="../../../index.html">IT Basic</a><span class="sep">/</span>
+        <a href="../../index.html">Pillar 9</a><span class="sep">/</span>
+        <a href="../index.html">Spring Boot</a><span class="sep">/</span>
+        <span>Chương 3</span>
+      </div>
+      <div class="chapter-num">Chương 03 · Cấu hình</div>
+      <h1 style="font-size: 2.6rem; margin: 0 0 12px; color: var(--ink);">
+        Cấu hình &amp; Profiles — một bản build, nhiều môi trường
+      </h1>
+      <p class="lead">
+        Cùng một file JAR phải chạy được ở máy bạn (H2, log chi tiết), ở staging (PostgreSQL test) và ở production (PostgreSQL thật, log gọn, mật khẩu từ vault) — <strong>không build lại</strong>. Đó là nguyên tắc <em>externalized configuration</em> (yếu tố III của <em>Twelve-Factor App</em>). Spring Boot cung cấp một hệ thống cấu hình nhiều tầng, có thứ tự ưu tiên rõ ràng; hiểu nó là hiểu vì sao "trên máy tôi chạy được" lại có thể sai.
+      </p>
+      <div class="chapter-meta">
+        <span class="item"><strong>Bài tập:</strong> 5</span>
+        <span class="item"><strong>Quiz:</strong> 6</span>
+        <span class="item"><strong>Prerequisites:</strong> Chương 1-2</span>
+      </div>
+    </header>
+
+    <div class="layout">
+
+      <main class="prose">
+
+        <div class="callout callout-goal">
+          <div class="callout-label">🎯 Mục tiêu chương</div>
+          <ul>
+            <li>Viết cấu hình bằng **<code>application.properties</code><strong> và </strong>YAML**; biết khi nào chọn cái nào.</li>
+            <li>Thuộc <strong>thứ tự ưu tiên</strong> của các nguồn cấu hình (dòng lệnh &gt; biến môi trường &gt; file profile &gt; file mặc định).</li>
+            <li>Dùng **<code>@Value</code>** và biết giới hạn của nó.</li>
+            <li>Dùng **<code>@ConfigurationProperties</code>** (có <code>record</code>, validation) cho cấu hình có cấu trúc — cách làm chuẩn.</li>
+            <li>Tách môi trường bằng <strong>profiles</strong> (<code>dev</code>, <code>test</code>, <code>prod</code>) và <code>@Profile</code>.</li>
+            <li>Quản lý <strong>bí mật</strong> (mật khẩu, API key) mà không commit vào Git.</li>
+            <li>Hiểu <strong>relaxed binding</strong> giữa <code>my.app-name</code>, <code>MY_APP_NAME</code>, <code>myAppName</code>.</li>
+          </ul>
+        </div>
+
+        <h2 id="file-cau-hinh">1. <code>application.properties</code> và YAML</h2>
+
+        <p>Boot tự đọc file <code>application.properties</code> hoặc <code>application.yml</code> ở thư mục <code>src/main/resources</code> (trên classpath). Hai định dạng tương đương:</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>application.properties</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-cls">server.port</span>=<span class="tok-num">8081</span>
+<span class="tok-cls">spring.application.name</span>=shop-api
+<span class="tok-cls">spring.datasource.url</span>=jdbc:postgresql://localhost:<span class="tok-num">5432</span>/shop
+<span class="tok-cls">spring.datasource.username</span>=shop
+<span class="tok-cls">spring.jpa.hibernate.ddl-auto</span>=validate
+<span class="tok-cls">app.jwt.expiry-minutes</span>=<span class="tok-num">30</span>
+<span class="tok-cls">app.cors.allowed-origins</span>=http://localhost:<span class="tok-num">3000</span>,https://shop.example.com</code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>application.yml</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-cls">server</span>:
+  <span class="tok-cls">port</span>: <span class="tok-num">8081</span>
+<span class="tok-cls">spring</span>:
+  <span class="tok-cls">application</span>:
+    <span class="tok-cls">name</span>: shop-api
+  <span class="tok-cls">datasource</span>:
+    <span class="tok-cls">url</span>: jdbc:postgresql://localhost:<span class="tok-num">5432</span>/shop
+    <span class="tok-cls">username</span>: shop
+  <span class="tok-cls">jpa</span>:
+    <span class="tok-cls">hibernate</span>:
+      <span class="tok-cls">ddl-auto</span>: validate
+<span class="tok-cls">app</span>:
+  <span class="tok-cls">jwt</span>:
+    <span class="tok-cls">expiry-minutes</span>: <span class="tok-num">30</span>
+  <span class="tok-cls">cors</span>:
+    <span class="tok-cls">allowed-origins</span>:
+      - <span class="tok-cls">http</span>://localhost:<span class="tok-num">3000</span>
+      - <span class="tok-cls">https</span>://shop.example.com</code></pre>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th></th><th><code>.properties</code></th><th><code>.yml</code></th></tr></thead>
+            <tbody>
+              <tr><td>Phân cấp</td><td>Lặp tiền tố <code>spring.datasource.</code></td><td>Thụt lề — gọn khi nhiều khoá cùng nhánh</td></tr>
+              <tr><td>Danh sách</td><td>Phân cách bằng dấu phẩy hoặc <code>x[0]=</code></td><td>Gạch đầu dòng <code>- </code></td></tr>
+              <tr><td>Rủi ro</td><td>Ít</td><td>Thụt lề sai là lỗi khó thấy; tab không hợp lệ</td></tr>
+              <tr><td>Nhiều profile trong 1 file</td><td>❌</td><td>✅ dùng <code>---</code> ngăn cách</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout callout-tip">
+          <div class="callout-label">💡 Chọn một và giữ nhất quán</div>
+          <p>Đa số dự án thực tế chọn <strong>YAML</strong>. Chọn gì cũng được — nhưng đừng để cả hai cùng tồn tại trong một dự án: nếu cả hai có mặt, <code>.properties</code> thắng <code>.yml</code>, rất dễ gây nhầm.</p>
+        </div>
+        <p>Danh sách các key chuẩn của Boot (hàng nghìn): <em>Spring Boot Reference → Application Properties</em>. IDE (IntelliJ Ultimate, VS Code + Spring tools) gợi ý &amp; kiểm tra khi gõ.</p>
+
+        <h2 id="thu-tu-uu-tien">2. Thứ tự ưu tiên — nguồn nào thắng?</h2>
+
+        <p>Cùng một key có thể xuất hiện ở nhiều nơi. Boot gộp tất cả; <strong>nguồn ưu tiên cao hơn ghi đè nguồn thấp hơn</strong>. Rút gọn từ cao xuống thấp:</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Ưu tiên</th><th>Nguồn</th><th>Dùng làm gì</th></tr></thead>
+            <tbody>
+              <tr><td>1 (cao nhất)</td><td><strong>Tham số dòng lệnh</strong> <code>--server.port=9090</code></td><td>Ghi đè tạm thời khi chạy</td></tr>
+              <tr><td>2</td><td><code>SPRING_APPLICATION_JSON</code> (biến môi trường chứa JSON)</td><td>Ít dùng</td></tr>
+              <tr><td>3</td><td><strong>Biến môi trường hệ điều hành</strong> <code>SERVER_PORT=9090</code></td><td>Cách chuẩn trên Docker/Kubernetes</td></tr>
+              <tr><td>4</td><td>File <code>application-{profile}.yml</code> <strong>bên ngoài</strong> JAR (cùng thư mục chạy, <code>./config/</code>)</td><td>Cấu hình riêng của server</td></tr>
+              <tr><td>5</td><td>File <code>application-{profile}.yml</code> <strong>trong</strong> JAR</td><td>Mặc định theo môi trường</td></tr>
+              <tr><td>6</td><td>File <code>application.yml</code> bên ngoài rồi trong JAR</td><td>Mặc định chung</td></tr>
+              <tr><td>7 (thấp nhất)</td><td><code>@PropertySource</code>, <code>SpringApplication.setDefaultProperties</code></td><td>Giá trị dự phòng</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="java-rule"><strong>Quy tắc nhớ:</strong> càng <em>gần lúc chạy</em> và càng <em>ngoài code</em>, càng ưu tiên cao. Nhờ vậy ops đổi được cổng hay mật khẩu mà không cần build lại JAR.</div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Thử</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-fn">java</span> <span class="tok-kw">-jar</span> app.jar                                 <span class="tok-com"> # đọc application.yml → 8081</span>
+<span class="tok-fn">SERVER_PORT=9000</span> java <span class="tok-kw">-jar</span> app.jar                <span class="tok-com"> # biến môi trường thắng → 9000</span>
+<span class="tok-fn">SERVER_PORT=9000</span> java <span class="tok-kw">-jar</span> app.jar <span class="tok-kw">--server.port=7000</span>  <span class="tok-com"> # dòng lệnh thắng cả hai → 7000</span></code></pre>
+        </div>
+
+        <h2 id="value">3. <code>@Value</code> — tiêm từng giá trị</h2>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>MailService.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Service</span>
+<span class="tok-kw">public</span> <span class="tok-kw">class</span> <span class="tok-cls">MailService</span> {
+
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">String</span> from;
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-kw">int</span> timeoutMs;
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">List</span>&lt;<span class="tok-cls">String</span>&gt; bcc;
+
+    <span class="tok-kw">public</span> <span class="tok-cls">MailService</span>(
+            <span class="tok-ann">@Value</span>(<span class="tok-str">"${app.mail.from}"</span>) <span class="tok-cls">String</span> from,                       <span class="tok-com">// bắt buộc có, thiếu → lỗi khởi động</span>
+            <span class="tok-ann">@Value</span>(<span class="tok-str">"${app.mail.timeout-ms:3000}"</span>) <span class="tok-kw">int</span> timeoutMs,          <span class="tok-com">// có mặc định sau dấu :</span>
+            <span class="tok-ann">@Value</span>(<span class="tok-str">"${app.mail.bcc:}"</span>) <span class="tok-cls">List</span>&lt;<span class="tok-cls">String</span>&gt; bcc)        <span class="tok-com">// mặc định rỗng → danh sách rỗng {</span>
+        <span class="tok-kw">this</span>.from = from;
+        <span class="tok-kw">this</span>.timeoutMs = timeoutMs;
+        <span class="tok-kw">this</span>.bcc = bcc;
+    }
+}</code></pre>
+        </div>
+        <p><code>@Value</code> hợp cho <strong>một-hai giá trị lẻ</strong>. Nhược điểm khi dùng rộng:</p>
+        <ul>
+          <li>Key là <strong>chuỗi rải rác</strong> trong code — đổi tên key thì không compiler nào báo lỗi.</li>
+          <li>Không có cấu trúc: 10 giá trị liên quan là 10 <code>@Value</code>.</li>
+          <li>Không validation, không IDE auto-complete, không tài liệu tự sinh.</li>
+        </ul>
+        <p>Với nhóm cấu hình liên quan — hãy dùng <code>@ConfigurationProperties</code>.</p>
+
+        <h2 id="config-properties">4. <code>@ConfigurationProperties</code> — cách làm chuẩn</h2>
+
+        <p>Gom một nhánh cấu hình vào một lớp có kiểu rõ ràng. Với Spring Boot 3 và Java 21, **<code>record</code>** là lựa chọn tự nhiên (bất biến, gọn):</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>application.yml</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-cls">app</span>:
+  <span class="tok-cls">jwt</span>:
+    <span class="tok-cls">secret</span>: ${JWT_SECRET}<span class="tok-com">            # lấy từ biến môi trường</span>
+    <span class="tok-cls">expiry</span>: 30m<span class="tok-com">                      # Duration — Boot hiểu 30m, 2h, PT30M</span>
+    <span class="tok-cls">issuer</span>: shop-api
+  <span class="tok-cls">upload</span>:
+    <span class="tok-cls">max-size</span>: 5MB<span class="tok-com">                    # DataSize</span>
+    <span class="tok-cls">allowed-types</span>:
+      - image/png
+      - image/jpeg</code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>AppProperties.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@ConfigurationProperties</span>(prefix = <span class="tok-str">"app"</span>)
+<span class="tok-ann">@Validated</span>                                          <span class="tok-com">// bật kiểm tra ràng buộc</span>
+<span class="tok-kw">public</span> <span class="tok-kw">record</span> <span class="tok-cls">AppProperties</span>(<span class="tok-cls">Jwt</span> jwt, <span class="tok-cls">Upload</span> upload) {
+
+    <span class="tok-kw">public</span> <span class="tok-kw">record</span> <span class="tok-cls">Jwt</span>(
+            <span class="tok-ann">@NotBlank</span> <span class="tok-cls">String</span> secret,
+            <span class="tok-ann">@DefaultValue</span>(<span class="tok-str">"30m"</span>) <span class="tok-cls">Duration</span> expiry,   <span class="tok-com">// giá trị mặc định nếu không cấu hình</span>
+            <span class="tok-ann">@NotBlank</span> <span class="tok-cls">String</span> issuer) { }
+
+    <span class="tok-kw">public</span> <span class="tok-kw">record</span> <span class="tok-cls">Upload</span>(
+            <span class="tok-ann">@DefaultValue</span>(<span class="tok-str">"5MB"</span>) <span class="tok-cls">DataSize</span> maxSize,
+            <span class="tok-ann">@NotEmpty</span> <span class="tok-cls">List</span>&lt;<span class="tok-cls">String</span>&gt; allowedTypes) { }
+}</code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Đăng ký &amp; dùng</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@SpringBootApplication</span>
+<span class="tok-ann">@ConfigurationPropertiesScan</span>                        <span class="tok-com">// tự tìm mọi @ConfigurationProperties</span>
+<span class="tok-kw">public</span> <span class="tok-kw">class</span> <span class="tok-cls">ShopApplication</span> { ... }
+
+<span class="tok-ann">@Service</span>
+<span class="tok-kw">class</span> <span class="tok-cls">TokenService</span> {
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">AppProperties</span> props;
+    <span class="tok-cls">TokenService</span>(<span class="tok-cls">AppProperties</span> props) { <span class="tok-kw">this</span>.props = props; }   <span class="tok-com">// tiêm như bean bình thường</span>
+
+    <span class="tok-cls">Instant</span> <span class="tok-fn">hetHan</span>() { <span class="tok-kw">return</span> <span class="tok-cls">Instant</span>.<span class="tok-fn">now</span>().<span class="tok-fn">plus</span>(props.<span class="tok-fn">jwt</span>().<span class="tok-fn">expiry</span>()); }
+}</code></pre>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Lợi ích</th><th>Giải thích</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Kiểu mạnh</strong></td><td><code>Duration</code>, <code>DataSize</code>, <code>List&lt;String&gt;</code>, enum, <code>Path</code>… tự chuyển từ chuỗi</td></tr>
+              <tr><td><strong>Validation lúc khởi động</strong></td><td>Thiếu <code>app.jwt.secret</code> ⇒ <strong>fail fast</strong> ngay lúc boot, không phải lúc có người đăng nhập</td></tr>
+              <tr><td><strong>Một nơi duy nhất</strong></td><td>Mọi key <code>app.*</code> nằm trong một lớp — dễ tìm, dễ đổi tên (IDE refactor)</td></tr>
+              <tr><td><strong>Dễ test</strong></td><td><code>new AppProperties(...)</code> — không cần Spring</td></tr>
+              <tr><td><strong>Auto-complete</strong></td><td>Thêm <code>spring-boot-configuration-processor</code> (optional) ⇒ IDE gợi ý key và hiện Javadoc</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout callout-note">
+          <div class="callout-label">📌 Binding bằng constructor</div>
+          <p>Với <code>record</code> hoặc lớp có đúng một constructor có tham số, Boot 3 tự dùng <strong>constructor binding</strong> (không cần <code>@ConstructorBinding</code>). Lớp thường có setter vẫn dùng được (JavaBean binding). Ưu tiên <code>record</code>: không thể bị sửa sau khi khởi tạo.</p>
+        </div>
+
+        <h3 id="relaxed">4.1. Relaxed binding — một key, nhiều cách viết</h3>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Nơi dùng</th><th>Cách viết</th><th>Quy ước</th></tr></thead>
+            <tbody>
+              <tr><td><code>.properties</code> / <code>.yml</code></td><td><code>app.jwt.expiry-minutes</code></td><td><strong>kebab-case</strong> — khuyến nghị</td></tr>
+              <tr><td><code>.properties</code> / <code>.yml</code></td><td><code>app.jwt.expiryMinutes</code>, <code>app.jwt.expiry_minutes</code></td><td>Vẫn bind được</td></tr>
+              <tr><td>Biến môi trường</td><td><code>APP_JWT_EXPIRYMINUTES</code></td><td>HOA, <code>_</code> thay <code>.</code> và <code>-</code>; <strong>bỏ</strong> dấu <code>-</code></td></tr>
+              <tr><td>Tham số dòng lệnh</td><td><code>--app.jwt.expiry-minutes=45</code></td><td>Như file</td></tr>
+              <tr><td>Trong Java</td><td><code>jwt.expiryMinutes()</code></td><td>camelCase</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="profiles">5. Profiles — cấu hình theo môi trường</h2>
+
+        <p><strong>Profile</strong> là một nhãn (<code>dev</code>, <code>test</code>, <code>prod</code>…). Khi bật, Boot nạp thêm <code>application-{profile}.yml</code> (ghi đè file chung) và bật các bean <code>@Profile("…")</code>.</p>
+        <div class="hierarchy"><pre>src/main/resources/
+├── application.yml            ← chung cho mọi môi trường
+├── application-dev.yml        ← chỉ khi profile "dev"
+├── application-test.yml       ← chỉ khi profile "test"
+└── application-prod.yml       ← chỉ khi profile "prod"</pre></div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>application.yml</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-cls">spring</span>:
+  <span class="tok-cls">application</span>:
+    <span class="tok-cls">name</span>: shop-api
+  <span class="tok-cls">profiles</span>:
+    <span class="tok-cls">default</span>: dev<span class="tok-com">                    # nếu không chỉ định, dùng dev</span>
+<span class="tok-cls">app</span>:
+  <span class="tok-cls">mail</span>:
+    <span class="tok-cls">from</span>: no-reply@shop.example.com</code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>application-dev.yml</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-cls">spring</span>:
+  <span class="tok-cls">datasource</span>:
+    <span class="tok-cls">url</span>: jdbc:h2:mem:shop;MODE=PostgreSQL
+  <span class="tok-cls">h2</span>:
+    <span class="tok-cls">console</span>:
+      <span class="tok-cls">enabled</span>: <span class="tok-kw">true</span>
+<span class="tok-cls">logging</span>:
+  <span class="tok-cls">level</span>:
+    <span class="tok-cls">vn.itbasic</span>: DEBUG
+    <span class="tok-cls">org.hibernate.SQL</span>: DEBUG<span class="tok-com">        # in câu SQL</span></code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>application-prod.yml</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-cls">spring</span>:
+  <span class="tok-cls">datasource</span>:
+    <span class="tok-cls">url</span>: ${DB_URL}
+    <span class="tok-cls">username</span>: ${DB_USER}
+    <span class="tok-cls">password</span>: ${DB_PASSWORD}
+<span class="tok-cls">logging</span>:
+  <span class="tok-cls">level</span>:
+    <span class="tok-cls">root</span>: WARN
+    <span class="tok-cls">vn.itbasic</span>: INFO
+<span class="tok-cls">management</span>:
+  <span class="tok-cls">endpoints</span>:
+    <span class="tok-cls">web</span>:
+      <span class="tok-cls">exposure</span>:
+        <span class="tok-cls">include</span>: health,info</code></pre>
+        </div>
+
+        <h3 id="bat-profile">5.1. Bật profile</h3>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>Bốn cách</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-fn">./mvnw</span> spring-boot:run <span class="tok-kw">-Dspring-boot.run.profiles=dev</span>    <span class="tok-com"> # Maven</span>
+<span class="tok-fn">java</span> <span class="tok-kw">-jar</span> app.jar <span class="tok-kw">--spring.profiles.active=prod</span>             <span class="tok-com"> # dòng lệnh</span>
+<span class="tok-fn">SPRING_PROFILES_ACTIVE=prod</span> java <span class="tok-kw">-jar</span> app.jar               <span class="tok-com"> # biến môi trường — chuẩn trên server/Docker</span>
+<span class="tok-com"># trong test:  @ActiveProfiles("test")</span></code></pre>
+        </div>
+
+        <h3 id="profile-bean">5.2. <code>@Profile</code> trên bean</h3>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>ProfileBeans.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-kw">public</span> <span class="tok-kw">interface</span> <span class="tok-cls">EmailSender</span> { <span class="tok-kw">void</span> <span class="tok-fn">gui</span>(<span class="tok-cls">String</span> den, <span class="tok-cls">String</span> noiDung); }
+
+<span class="tok-ann">@Service</span> <span class="tok-ann">@Profile</span>(<span class="tok-str">"prod"</span>)
+<span class="tok-kw">class</span> <span class="tok-cls">SmtpEmailSender</span> <span class="tok-kw">implements</span> <span class="tok-cls">EmailSender</span> { <span class="tok-com">/* gửi thật */</span> }
+
+<span class="tok-ann">@Service</span> <span class="tok-ann">@Profile</span>(<span class="tok-str">"!prod"</span>)                          <span class="tok-com">// mọi profile trừ prod</span>
+<span class="tok-kw">class</span> <span class="tok-cls">LogEmailSender</span> <span class="tok-kw">implements</span> <span class="tok-cls">EmailSender</span> {
+    <span class="tok-kw">private</span> <span class="tok-kw">static</span> <span class="tok-kw">final</span> <span class="tok-cls">Logger</span> log = <span class="tok-cls">LoggerFactory</span>.<span class="tok-fn">getLogger</span>(<span class="tok-cls">LogEmailSender</span>.<span class="tok-kw">class</span>);
+    <span class="tok-kw">public</span> <span class="tok-kw">void</span> <span class="tok-fn">gui</span>(<span class="tok-cls">String</span> den, <span class="tok-cls">String</span> noiDung) { log.<span class="tok-fn">info</span>(<span class="tok-str">"[GIẢ LẬP] gửi tới {}: {}"</span>, den, noiDung); }
+}</code></pre>
+        </div>
+        <p>Dev/test dùng bản giả không gửi email thật; prod dùng bản thật — <strong>cùng code, khác cấu hình</strong>. Biểu thức hợp lệ: <code>"dev"</code>, <code>"!prod"</code>, <code>"dev | test"</code>, <code>"cloud &amp; eu"</code>.</p>
+
+        <h3 id="multi-doc">5.3. Nhiều profile trong một file YAML</h3>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>application.yml</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-cls">app</span>:
+  <span class="tok-cls">mail</span>:
+    <span class="tok-cls">from</span>: no-reply@shop.example.com
+---
+<span class="tok-cls">spring</span>:
+  <span class="tok-cls">config</span>:
+    <span class="tok-cls">activate</span>:
+      <span class="tok-cls">on-profile</span>: dev
+<span class="tok-cls">app</span>:
+  <span class="tok-cls">mail</span>:
+    <span class="tok-cls">from</span>: dev@localhost
+---
+<span class="tok-cls">spring</span>:
+  <span class="tok-cls">config</span>:
+    <span class="tok-cls">activate</span>:
+      <span class="tok-cls">on-profile</span>: prod
+<span class="tok-cls">logging</span>:
+  <span class="tok-cls">level</span>:
+    <span class="tok-cls">root</span>: WARN</code></pre>
+        </div>
+        <div class="callout callout-warning">
+          <div class="callout-label">⚠️ Đừng lạm dụng profile cho <em>logic</em></div>
+          <p>Profile để đổi <strong>cấu hình và hạ tầng</strong> (DB, email giả/thật). Đừng viết <code>if (profile == "prod")</code> trong nghiệp vụ: nó khiến code chạy ở prod khác code bạn đã test. Nếu hành vi khác nhau, hãy biểu diễn nó bằng <em>một property rõ nghĩa</em> (ví dụ <code>app.feature.new-checkout=true</code>).</p>
+        </div>
+
+        <h2 id="bi-mat">6. Bí mật — đừng bao giờ commit</h2>
+
+        <div class="java-rule"><strong>Mật khẩu, API key, JWT secret không bao giờ nằm trong Git</strong> — kể cả repo riêng tư, kể cả "chỉ tạm thời". Lịch sử Git là vĩnh viễn; bí mật lộ một lần phải coi như đã mất và đổi ngay.</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Cách</th><th>Cách làm</th><th>Phù hợp</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Biến môi trường</strong></td><td><code>${DB_PASSWORD}</code> trong YAML; export lúc chạy</td><td>Mặc định tốt nhất; Docker/K8s/CI đều hỗ trợ</td></tr>
+              <tr><td><strong>File ngoài, không commit</strong></td><td><code>spring.config.import=optional:file:./secrets.yml</code> (thêm vào <code>.gitignore</code>)</td><td>Máy dev</td></tr>
+              <tr><td><strong>Docker/K8s secret</strong></td><td>Mount thành file hoặc env</td><td>Container</td></tr>
+              <tr><td><strong>Vault / AWS Secrets Manager / GCP Secret Manager</strong></td><td>Spring Cloud Vault/AWS tích hợp qua <code>spring.config.import</code></td><td>Doanh nghiệp, cần xoay khoá &amp; audit</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>application-prod.yml + .gitignore</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-cls">spring</span>:
+  <span class="tok-cls">datasource</span>:
+    <span class="tok-cls">password</span>: ${DB_PASSWORD}<span class="tok-com">                   # KHÔNG có giá trị mặc định cho bí mật!</span>
+  <span class="tok-cls">config</span>:
+    <span class="tok-cls">import</span>: optional:file:./secrets.yml<span class="tok-com">        # file ngoài, bị gitignore</span>
+
+<span class="tok-com"># .gitignore</span>
+<span class="tok-com"># secrets.yml</span>
+<span class="tok-com"># .env</span></code></pre>
+        </div>
+        <div class="callout callout-gotcha">
+          <div class="callout-label">⚠️ Cả <code>${X:mặc-định}</code> cũng có thể rò rỉ</div>
+          <p>Viết <code>password: ${DB_PASSWORD:changeme}</code> nghĩa là *thiếu biến môi trường thì dùng <code>changeme</code>* — ứng dụng khởi động "thành công" với mật khẩu yếu thay vì <strong>fail fast</strong>. Với bí mật: không đặt giá trị mặc định.</p>
+        </div>
+        <p>Ngoài ra: đừng log <code>Environment</code>/properties; endpoint <code>/actuator/env</code> che các key chứa <code>password</code>, <code>secret</code>, <code>key</code>, <code>token</code> nhưng đừng dựa vào đó — chỉ mở khi cần và sau xác thực.</p>
+
+        <h2 id="twelve-factor">7. Bức tranh lớn: Twelve-Factor</h2>
+
+        <p>Hệ thống cấu hình của Boot hiện thực hoá yếu tố <strong>III — Config</strong>: <em>cấu hình thay đổi giữa các môi trường phải ở ngoài code</em>. Dấu hiệu bạn làm đúng:</p>
+        <ul>
+          <li><strong>Một artifact duy nhất</strong> (JAR/image) được promote từ dev → staging → prod; môi trường khác nhau chỉ ở biến môi trường/file cấu hình.</li>
+          <li>Có thể <strong>mở mã nguồn công khai ngay hôm nay</strong> mà không lộ bí mật nào.</li>
+          <li>Mọi cài đặt có thể đổi bằng biến môi trường — đúng thứ Docker Compose và Kubernetes cung cấp.</li>
+        </ul>
+
+        <h2 id="cheat-sheet">8. Cheat sheet chương 3</h2>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Nhu cầu</th><th>Công cụ</th></tr></thead>
+            <tbody>
+              <tr><td>Một giá trị lẻ, có mặc định</td><td><code>@Value("${key:default}")</code></td></tr>
+              <tr><td>Nhóm cấu hình có cấu trúc</td><td><code>@ConfigurationProperties</code> + <code>record</code> + <code>@Validated</code></td></tr>
+              <tr><td>Khác nhau giữa môi trường</td><td><code>application-{profile}.yml</code>, <code>SPRING_PROFILES_ACTIVE</code></td></tr>
+              <tr><td>Bean khác nhau theo môi trường</td><td><code>@Profile("prod")</code> / <code>@Profile("!prod")</code></td></tr>
+              <tr><td>Bí mật</td><td>Biến môi trường / secret manager; <strong>không</strong> default, <strong>không</strong> commit</td></tr>
+              <tr><td>Đổi cổng khi chạy</td><td><code>--server.port=…</code> hoặc <code>SERVER_PORT=…</code></td></tr>
+              <tr><td>Xem giá trị hiệu lực</td><td><code>/actuator/env</code> (cẩn thận) hoặc <code>--debug</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="bai-tap">Bài tập</h2>
+
+        <div class="exercises">
+
+          <div class="exercise">
+            <h4>Bảng ưu tiên bằng thực nghiệm</h4>
+            <div class="exercise-body">
+              <p>Tạo property <code>app.greeting</code> ở <strong>bốn nơi</strong> với giá trị khác nhau: <code>application.yml</code>, <code>application-dev.yml</code>, biến môi trường, tham số dòng lệnh. Viết endpoint <code>/greeting</code> trả về <code>@Value</code> của nó.</p>
+              <ul>
+                <li>Bật dần từng nguồn và ghi lại thứ tự nguồn nào thắng.</li>
+                <li>Đối chiếu với bảng ở mục 2. Có chỗ nào khác với dự đoán của bạn?</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Dự kiến: dòng lệnh &gt; biến môi trường (<code>APP_GREETING</code>) &gt; <code>application-dev.yml</code> &gt; <code>application.yml</code>. Nhớ rằng profile <code>dev</code> chỉ được nạp khi bật (hoặc là <code>default</code>).</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Chuyển <code>@Value</code> sang <code>@ConfigurationProperties</code></h4>
+            <div class="exercise-body">
+              <p>Có sẵn năm <code>@Value</code> trong <code>MailService</code> (<code>host</code>, <code>port</code>, <code>from</code>, <code>timeout</code>, <code>retries</code>).</p>
+              <ul>
+                <li>Gom thành <code>record MailProperties</code> với prefix <code>app.mail</code>.</li>
+                <li>Thêm validation: <code>host</code> không rỗng, <code>port</code> 1-65535, <code>retries</code> ≥ 0.</li>
+                <li>Xoá <code>app.mail.host</code> khỏi cấu hình ⇒ quan sát lỗi khởi động. Lỗi đó nói gì?</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p><code>@NotBlank</code>, <code>@Min(1) @Max(65535)</code>, <code>@PositiveOrZero</code>. Lỗi sẽ là <code>BindValidationException</code> / <em>Binding to target … failed</em> nêu rõ <code>Property: app.mail.host, Reason: must not be blank</code> — fail fast.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Ba profile, ba hành vi</h4>
+            <div class="exercise-body">
+              <p>Tạo interface <code>Notifier</code> với 3 bean: <code>ConsoleNotifier</code> (profile <code>dev</code>), <code>FakeNotifier</code> (profile <code>test</code>, ghi vào <code>List</code> để test kiểm tra), <code>SlackNotifier</code> (profile <code>prod</code>).</p>
+              <ul>
+                <li>Chạy từng profile, kiểm tra log.</li>
+                <li>Không bật profile nào ⇒ điều gì xảy ra? Sửa bằng <code>spring.profiles.default</code>.</li>
+                <li>Thử <code>@Profile("!prod")</code> để gộp dev &amp; test.</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Không profile nào ⇒ <code>NoSuchBeanDefinitionException</code> nếu không có bean nào khớp. <code>spring.profiles.default: dev</code> chỉ áp dụng khi <em>chưa</em> đặt <code>spring.profiles.active</code>.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Thợ săn bí mật</h4>
+            <div class="exercise-body">
+              <p>Cho file YAML bên dưới. Hãy chỉ ra ít nhất <strong>4 vấn đề</strong> về quản lý bí mật và viết lại cho đúng.</p>
+              <div class="code-wrap">
+                <div class="code-meta"><span>application-prod.yml</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-cls">spring</span>:
+  <span class="tok-cls">datasource</span>:
+    <span class="tok-cls">url</span>: jdbc:postgresql://prod-db.internal:<span class="tok-num">5432</span>/shop
+    <span class="tok-cls">username</span>: admin
+    <span class="tok-cls">password</span>: P@ssw0rd123
+<span class="tok-cls">app</span>:
+  <span class="tok-cls">jwt</span>:
+    <span class="tok-cls">secret</span>: ${JWT_SECRET:my-super-secret}
+<span class="tok-cls">management</span>:
+  <span class="tok-cls">endpoints</span>:
+    <span class="tok-cls">web</span>:
+      <span class="tok-cls">exposure</span>:
+        <span class="tok-cls">include</span>: <span class="tok-str">"*"</span></code></pre>
+              </div>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>(1) mật khẩu thật trong file; (2) username <code>admin</code> (nên có tài khoản ít quyền); (3) <code>JWT_SECRET</code> có default ⇒ thiếu env vẫn chạy với khoá yếu, công khai; (4) <code>include: "*"</code> lộ <code>env</code>, <code>heapdump</code>…; (5) nên <code>@Validated</code> bắt <code>secret</code> rỗng và độ dài tối thiểu. Viết lại: <code>${DB_PASSWORD}</code> không default, include chỉ <code>health,info</code>.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Tự dựng Twelve-Factor</h4>
+            <div class="exercise-body">
+              <p>Build một JAR duy nhất. Không sửa file nào, chạy nó <strong>ba lần</strong> với ba cấu hình khác nhau (cổng, tên ứng dụng, profile) chỉ bằng biến môi trường.</p>
+              <ul>
+                <li>Viết script <code>run.sh</code> nhận tên môi trường và export biến phù hợp.</li>
+                <li>Thêm một <code>docker-compose.yml</code> nhỏ có phần <code>environment:</code> cho cùng việc đó.</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Biến cần dùng: <code>SERVER_PORT</code>, <code>SPRING_APPLICATION_NAME</code>, <code>SPRING_PROFILES_ACTIVE</code>. Chú ý quy tắc relaxed binding cho biến môi trường: dấu <code>.</code> và <code>-</code> thành <code>_</code>, viết HOA.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+        </div>
+
+        <h2 id="quiz">Quiz</h2>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q1</span>
+            <div class="quiz-q-text"><p>Thứ tự ưu tiên cấu hình trong Spring Boot (rút gọn) là gì và vì sao quan trọng?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Cao → thấp: <strong>dòng lệnh</strong> &gt; <strong>biến môi trường</strong> &gt; <code>application-{profile}</code> &gt; <code>application.yml</code> &gt; mặc định. Quan trọng vì cho phép ops đổi cấu hình <strong>không build lại</strong> — một artifact chạy nhiều môi trường.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q2</span>
+            <div class="quiz-q-text"><p>Khi nào chọn <code>@Value</code>, khi nào chọn <code>@ConfigurationProperties</code>?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p><code>@Value</code> cho <strong>một-hai giá trị lẻ</strong>. <code>@ConfigurationProperties</code> cho <strong>nhóm có cấu trúc</strong>: kiểu mạnh, validation fail-fast, một nơi duy nhất, IDE hỗ trợ, dễ test. Từ nhóm ≥ 3 giá trị liên quan, nên dùng <code>@ConfigurationProperties</code>.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q3</span>
+            <div class="quiz-q-text"><p>Profile dùng để làm gì? Nêu một lạm dụng cần tránh.</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Đổi <strong>cấu hình/hạ tầng</strong> theo môi trường (DB, email giả/thật, log level) bằng <code>application-{profile}.yml</code> và <code>@Profile</code>. Tránh: <code>if (isProd)</code> trong nghiệp vụ — code ở prod khác code đã test. Hành vi khác nhau nên là một property tính năng rõ nghĩa.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q4</span>
+            <div class="quiz-q-text"><p>Vì sao <code>${DB_PASSWORD:changeme}</code> là ý tưởng tệ?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Thiếu biến môi trường thì ứng dụng <strong>vẫn khởi động</strong> với mật khẩu yếu, công khai thay vì <strong>fail fast</strong>. Với bí mật: không có default ⇒ thiếu là lỗi khởi động ngay.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q5</span>
+            <div class="quiz-q-text"><p>Relaxed binding là gì? <code>APP_JWT_EXPIRYMINUTES</code> bind vào đâu?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Boot chấp nhận nhiều cách viết cho cùng một key. Biến môi trường <code>APP_JWT_EXPIRYMINUTES</code> (HOA, <code>_</code> thay <code>.</code>/<code>-</code>, bỏ dấu gạch) bind vào <code>app.jwt.expiry-minutes</code> ⇒ thuộc tính <code>expiryMinutes</code> của lớp cấu hình. File chuẩn dùng kebab-case.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q6</span>
+            <div class="quiz-q-text"><p><code>@ConfigurationProperties</code> với <code>record</code> có lợi gì so với lớp có setter?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Bất biến (không ai đổi cấu hình lúc chạy), gọn, constructor binding tự động ở Boot 3, dễ khởi tạo trong test (<code>new AppProperties(...)</code>), cho phép <code>@DefaultValue</code> ngay trên thành phần.</p>
+            </div>
+          </details>
+        </div>
+
+        <h2 id="tong-ket">Tổng kết</h2>
+
+        <p>Sau chương 3, bạn đã nắm:</p>
+        <ul>
+          <li>Cấu hình nằm ở **<code>application.yml</code>/<code>.properties</code>**; chọn một định dạng và giữ nhất quán.</li>
+          <li><strong>Dòng lệnh &gt; biến môi trường &gt; file profile &gt; file chung</strong> — quy tắc ưu tiên cho phép một JAR chạy mọi nơi.</li>
+          <li>**<code>@Value</code><strong> cho giá trị lẻ; </strong><code>@ConfigurationProperties</code> + <code>record</code> + <code>@Validated</code>** cho cấu hình có cấu trúc, fail fast.</li>
+          <li><strong>Profile</strong> đổi cấu hình/hạ tầng, không đổi logic; bật bằng <code>SPRING_PROFILES_ACTIVE</code>.</li>
+          <li><strong>Bí mật</strong> qua biến môi trường/secret manager; <strong>không</strong> commit, <strong>không</strong> default.</li>
+          <li><strong>Relaxed binding</strong>: kebab-case trong file, <code>UPPER_SNAKE</code> trong biến môi trường, camelCase trong Java.</li>
+        </ul>
+
+        <h2 id="ket-noi">Kết nối</h2>
+        <ul>
+          <li><strong>Chương 1</strong> — <code>application.properties</code> là nơi đặt <code>server.port</code>, <code>logging.*</code>, <code>management.*</code>.</li>
+          <li><strong>Chương 2</strong> — <code>@Value</code>/<code>@ConfigurationProperties</code> tiêm cấu hình vào bean; <code>@Profile</code> điều khiển bean nào được tạo.</li>
+          <li><strong>Chương 6</strong> — <code>spring.datasource.*</code>, <code>spring.jpa.*</code> cho CSDL.</li>
+          <li><strong>Chương 10</strong> — <code>app.jwt.*</code> (secret, thời hạn) là ví dụ điển hình của <code>@ConfigurationProperties</code>.</li>
+          <li><strong>Chương 11</strong> — <code>@ActiveProfiles("test")</code>, <code>@TestPropertySource</code>, Testcontainers qua <code>@DynamicPropertySource</code>.</li>
+          <li><strong>Chương 14 &amp; DevOps chương 9</strong> — Docker/K8s truyền cấu hình &amp; bí mật bằng biến môi trường.</li>
+        </ul>
+
+        <nav class="chapter-nav">
+          <a href="chuong2.html" class="prev">
+            <div class="dir">← Chương 2</div>
+            <div class="label">IoC &amp;amp; Dependency Injection</div>
+          </a>
+          <a href="chuong4.html" class="next">
+            <div class="dir">Chương 4 →</div>
+            <div class="label">Spring MVC &amp;amp; REST API</div>
+          </a>
+        </nav>
+
+      </main>
+
+      <aside class="toc">
+        <div class="toc-label">Trong chương này</div>
+        <ul>
+          <li><a href="#file-cau-hinh">1. <code>application.properties</code> và YAML</a></li>
+          <li><a href="#thu-tu-uu-tien">2. Thứ tự ưu tiên — nguồn nào thắng?</a></li>
+          <li><a href="#value">3. <code>@Value</code> — tiêm từng giá trị</a></li>
+          <li><a href="#config-properties">4. <code>@ConfigurationProperties</code> — cách làm chuẩn</a></li>
+          <li class="level-3"><a href="#relaxed">4.1. Relaxed binding — một key, nhiều cách viết</a></li>
+          <li><a href="#profiles">5. Profiles — cấu hình theo môi trường</a></li>
+          <li class="level-3"><a href="#bat-profile">5.1. Bật profile</a></li>
+          <li class="level-3"><a href="#profile-bean">5.2. <code>@Profile</code> trên bean</a></li>
+          <li class="level-3"><a href="#multi-doc">5.3. Nhiều profile trong một file YAML</a></li>
+          <li><a href="#bi-mat">6. Bí mật — đừng bao giờ commit</a></li>
+          <li><a href="#twelve-factor">7. Bức tranh lớn: Twelve-Factor</a></li>
+          <li><a href="#cheat-sheet">8. Cheat sheet chương 3</a></li>
+          <li><a href="#bai-tap">Bài tập</a></li>
+          <li><a href="#quiz">Quiz</a></li>
+          <li><a href="#tong-ket">Tổng kết</a></li>
+          <li><a href="#ket-noi">Kết nối</a></li>
+        </ul>
+      </aside>
+
+    </div>
+  </div>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p>
+        Chương 3 — Cấu hình &amp;amp; Profiles · Spring Boot sub-pillar · Pillar 9 IT Basic<br/>
+        <a href="chuong2.html">← Chương 2</a> · <a href="../index.html">Spring Boot TOC</a> · <a href="chuong4.html">Chương 4 →</a>
+      </p>
+    </div>
+  </footer>
+
+  <script src="../../shared/js/chapter.js"></script>
+</body>
+</html>

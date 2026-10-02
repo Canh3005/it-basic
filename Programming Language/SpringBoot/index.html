@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Spring Boot — 14 chương · IT Basic Pillar 9</title>
+  <meta name="description" content="Sub-pillar Spring Boot của IT Basic — 14 chương từ IoC/DI đến microservices và triển khai Kubernetes (Spring Boot 3, Java 21). REST API, JPA, Security/JWT, Testcontainers, cache/queue, Docker, CI/CD." />
+  <meta name="theme-color" content="#4a9a28" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Bitter:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="../shared/css/base.css">
+  <link rel="stylesheet" href="css/theme.css">
+
+  <style>
+    .hero { padding: 90px 0 56px; text-align: center; }
+    .hero h1 { font-size: 4rem; line-height: 1.05; margin: 14px 0 18px; }
+    .hero .lead { font-size: 1.2rem; max-width: 740px; margin: 0 auto 32px; }
+    .meta-row {
+      display: flex; gap: 14px; justify-content: center; flex-wrap: wrap;
+      font-family: var(--font-mono); font-size: 0.86rem; color: var(--text-muted);
+    }
+    .meta-row .tag {
+      background: var(--accent-soft); color: var(--accent-deep);
+      padding: 4px 12px; border-radius: 14px; letter-spacing: 0.04em; font-weight: 600;
+    }
+    .roadmap-intro { max-width: 780px; margin: 0 auto 28px; text-align: center; }
+    .roadmap-intro p { color: var(--text-soft); font-size: 1.02rem; }
+    .phase-label {
+      grid-column: 1 / -1;
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent-deep);
+      background: var(--accent-soft);
+      padding: 6px 14px;
+      border-radius: 4px;
+      margin: 18px 0 4px;
+    }
+    @media (max-width: 720px) { .hero h1 { font-size: 2.6rem; } }
+  </style>
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="container">
+      <a class="site-logo" href="../../index.html">
+        <span class="mark mark-spring">Sb</span>
+        Spring Boot · IT Basic
+      </a>
+      <nav>
+        <ul class="site-nav">
+          <li><a href="../../index.html">IT Basic</a></li>
+          <li><a href="../index.html">Pillar 9</a></li>
+          <li><a href="../Java/index.html">Java</a></li>
+          <li><a href="index.html" class="active">Spring Boot</a></li>
+          <li><a href="../../Roadmap/index.html">Lộ trình Fullstack</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <section class="hero spring-hero">
+    <div class="container">
+      <div class="chapter-num">Sub-pillar 9.6 · Spring Boot</div>
+      <h1>Backend với <em>Spring Boot</em></h1>
+      <p class="lead">
+        Spring Boot là framework backend phổ biến nhất của hệ sinh thái Java — nền tảng của rất nhiều hệ thống
+        ngân hàng, thương mại điện tử, viễn thông. Sub-pillar này dạy <strong>Spring Boot 3 trên Java 21</strong>
+        theo hướng <em>hiểu cơ chế</em>: container và DI, proxy và transaction, filter chain của Security, N+1 của JPA —
+        rồi đi tới những thứ làm nên một hệ thống thật: bảo mật JWT, kiểm thử với Testcontainers, cache và message
+        queue, microservices, Docker và Kubernetes.
+      </p>
+      <div class="meta-row">
+        <span class="tag">Spring Boot 3 · Java 21</span>
+        <span>·</span>
+        <span>14 chương</span>
+        <span>·</span>
+        <span>~10,700 dòng</span>
+        <span>·</span>
+        <span>70 bài tập + 84 quiz</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="container">
+      <h2 class="section-title">Lộ trình 14 chương</h2>
+      <div class="roadmap-intro">
+        <p>
+          Năm giai đoạn: <strong>nền tảng</strong> (1-3) → <strong>REST API</strong> (4-5) →
+          <strong>dữ liệu &amp; kiến trúc</strong> (6-8) → <strong>bảo mật &amp; chất lượng</strong> (9-11) →
+          <strong>hệ thống thật</strong> (12-14). Mỗi chương có lý thuyết, code chạy được, sơ đồ, 5 bài tập, 6 quiz
+          và cheat sheet; chương 14 kết thúc bằng dự án <strong>Shop API</strong> ghép toàn bộ.
+        </p>
+      </div>
+
+      <div class="chapters">
+
+        <div class="phase-label">Giai đoạn 1 · Nền tảng Spring Boot</div>
+        <a class="chapter-card" href="chuong/chuong1.html">
+          <div class="num">01</div>
+          <div class="info">
+            <h3>Hello Spring Boot</h3>
+            <p>Spring vs Spring Boot, Initializr, <code>@SpringBootApplication</code>, starter, auto-configuration và cách debug nó, embedded Tomcat, fat JAR, DevTools, Actuator.</p>
+          </div>
+          <span class="cta">Đọc →</span>
+        </a>
+        <a class="chapter-card" href="chuong/chuong2.html">
+          <div class="num">02</div>
+          <div class="info">
+            <h3>IoC &amp; Dependency Injection</h3>
+            <p>IoC/DI, <code>ApplicationContext</code>, stereotype và <code>@Bean</code>, constructor injection, <code>@Primary</code>/<code>@Qualifier</code>, scope &amp; bẫy singleton, vòng đời bean, phụ thuộc vòng, proxy.</p>
+          </div>
+          <span class="cta">Đọc →</span>
+        </a>
+        <a class="chapter-card" href="chuong/chuong3.html">
+          <div class="num">03</div>
+          <div class="info">
+            <h3>Cấu hình &amp; Profiles</h3>
+            <p><code>application.yml</code>, thứ tự ưu tiên, <code>@Value</code> vs <code>@ConfigurationProperties</code> (record), profiles, quản lý bí mật, Twelve-Factor.</p>
+          </div>
+          <span class="cta">Đọc →</span>
+        </a>
+        <div class="phase-label">Giai đoạn 2 · Xây REST API</div>
+        <a class="chapter-card" href="chuong/chuong4.html">
+          <div class="num">04</div>
+          <div class="info">
+            <h3>Spring MVC &amp; REST API</h3>
+            <p><code>DispatcherServlet</code>, mapping, <code>@PathVariable</code>/<code>@RequestBody</code>, mã trạng thái, Jackson, upload file, Filter vs Interceptor, CORS.</p>
+          </div>
+          <span class="cta">Đọc →</span>
+        </a>
+        <a class="chapter-card" href="chuong/chuong5.html">
+          <div class="num">05</div>
+          <div class="info">
+            <h3>Validation &amp; xử lý lỗi</h3>
+            <p>Bean Validation, ràng buộc tuỳ biến, exception nghiệp vụ, <code>@RestControllerAdvice</code>, <code>ProblemDetail</code> (RFC 9457), không rò rỉ thông tin.</p>
+          </div>
+          <span class="cta">Đọc →</span>
+        </a>
+        <div class="phase-label">Giai đoạn 3 · Dữ liệu & kiến trúc</div>
+        <a class="chapter-card" href="chuong/chuong6.html">
+          <div class="num">06</div>
+          <div class="info">
+            <h3>Spring Data JPA</h3>
+            <p>JPA/Hibernate/Spring Data, PostgreSQL + HikariCP, entity, derived query, <code>@Query</code>, projection, phân trang, schema.</p>
+          </div>
+          <span class="cta">Đọc →</span>
+        </a>
+        <a class="chapter-card" href="chuong/chuong7.html">
+          <div class="num">07</div>
+          <div class="info">
+            <h3>JPA nâng cao &amp; Transaction</h3>
+            <p>Persistence context, dirty checking, quan hệ, lazy loading, N+1, <code>@Transactional</code> (propagation, rollback), <code>@Version</code>, Flyway.</p>
+          </div>
+          <span class="cta">Đọc →</span>
+        </a>
+        <a class="chapter-card" href="chuong/chuong8.html">
+          <div class="num">08</div>
+          <div class="info">
+            <h3>Kiến trúc tầng, DTO &amp; OpenAPI</h3>
+            <p>Layered &amp; package-by-feature, DTO + MapStruct, thiết kế service, quy ước API (version, idempotency), OpenAPI/Swagger, ArchUnit.</p>
+          </div>
+          <span class="cta">Đọc →</span>
+        </a>
+        <div class="phase-label">Giai đoạn 4 · Bảo mật & chất lượng</div>
+        <a class="chapter-card" href="chuong/chuong9.html">
+          <div class="num">09</div>
+          <div class="info">
+            <h3>Spring Security</h3>
+            <p>Filter chain, <code>SecurityFilterChain</code>, BCrypt, <code>UserDetailsService</code>, role vs authority, method security, CSRF/CORS, 401/403, IDOR.</p>
+          </div>
+          <span class="cta">Đọc →</span>
+        </a>
+        <a class="chapter-card" href="chuong/chuong10.html">
+          <div class="num">10</div>
+          <div class="info">
+            <h3>JWT &amp; OAuth2</h3>
+            <p>JWT, access + refresh token rotation, OAuth2 Resource Server, thu hồi token, lưu token, OAuth2/OIDC, Authorization Code + PKCE.</p>
+          </div>
+          <span class="cta">Đọc →</span>
+        </a>
+        <a class="chapter-card" href="chuong/chuong11.html">
+          <div class="num">11</div>
+          <div class="info">
+            <h3>Kiểm thử</h3>
+            <p>Kim tự tháp test, Mockito, <code>@WebMvcTest</code>, <code>@DataJpaTest</code>, Testcontainers, <code>@SpringBootTest</code>, test bảo mật, <code>Clock</code>.</p>
+          </div>
+          <span class="cta">Đọc →</span>
+        </a>
+        <div class="phase-label">Giai đoạn 5 · Hệ thống thật</div>
+        <a class="chapter-card" href="chuong/chuong12.html">
+          <div class="num">12</div>
+          <div class="info">
+            <h3>Cache, Messaging &amp; Async</h3>
+            <p>Spring Cache (Caffeine/Redis), cache-aside, Redis cho rate limit, <code>@Async</code>/<code>@Scheduled</code>, sự kiện, RabbitMQ/Kafka, Outbox, consumer idempotent.</p>
+          </div>
+          <span class="cta">Đọc →</span>
+        </a>
+        <a class="chapter-card" href="chuong/chuong13.html">
+          <div class="num">13</div>
+          <div class="info">
+            <h3>Microservices &amp; Spring Cloud</h3>
+            <p>Monolith vs microservices, bounded context, <code>RestClient</code>, Resilience4j, API Gateway, Saga, observability, virtual threads.</p>
+          </div>
+          <span class="cta">Đọc →</span>
+        </a>
+        <a class="chapter-card" href="chuong/chuong14.html">
+          <div class="num">14</div>
+          <div class="info">
+            <h3>Docker, deploy &amp; dự án thực chiến</h3>
+            <p>Dockerfile multi-stage, compose, GitHub Actions, Kubernetes (probes, graceful shutdown), checklist production, GraalVM, dự án Shop API.</p>
+          </div>
+          <span class="cta">Đọc →</span>
+        </a>
+
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="container narrow">
+      <h2 class="section-title">Học Spring Boot thế nào cho đúng</h2>
+
+      <div class="callout callout-tip">
+        <div class="callout-label">📋 Điều kiện đầu vào</div>
+        <p>
+          Cần nắm <a href="../Java/index.html">sub-pillar Java</a> chương 1-9 (OOP, Collections, Generics) và
+          nên đã học Lambda/Stream, JDBC (chương 10, 13). Thêm kiến thức nền từ các trụ cột:
+          <strong>Networking</strong> (HTTP, Auth), <strong>Database</strong> (SQL, transaction, index), <strong>OOP</strong> (SOLID).
+        </p>
+      </div>
+
+      <div class="callout callout-warning">
+        <div class="callout-label">⚠️ Về phiên bản và tài liệu trên mạng</div>
+        <p>
+          Nhiều bài hướng dẫn vẫn dùng <strong>Spring Boot 2</strong>: <code>javax.*</code> (nay là <code>jakarta.*</code>),
+          <code>WebSecurityConfigurerAdapter</code> (đã bị xoá ở Spring Security 6), <code>RestTemplate</code>,
+          <code>@MockBean</code>. Sub-pillar này dùng <strong>Boot 3.x</strong> làm chuẩn. Khi copy code từ nơi khác, kiểm tra
+          phiên bản trước.
+        </p>
+      </div>
+
+      <h2 class="section-title" style="margin-top: 36px;">Spring Boot trong bức tranh Pillar 9</h2>
+      <ul>
+        <li><strong>Chương 7 (JPA &amp; Transaction)</strong> ↔ <a href="../Java/chuong/chuong13.html">Java Chương 13 (JDBC)</a> — JPA là lớp trên JDBC; hiểu JDBC để hiểu SQL mà Hibernate sinh ra.</li>
+        <li><strong>Chương 4-5, 9-10</strong> ↔ <a href="../../Fullstack-ContactCenter/index.html">Fullstack-ContactCenter (NestJS)</a> — cùng bài toán REST/JWT/RBAC bằng hệ sinh thái Node.</li>
+        <li><strong>Chương 12-14</strong> ↔ <a href="../../DevOps/index.html">DevOps</a> và <a href="../../SystemDesign/index.html">System Design</a> — cache, queue, microservices, CI/CD, Kubernetes ở góc nhìn hạ tầng.</li>
+      </ul>
+      <p style="margin-top: 16px;">Xem vị trí sub-pillar này trong <a href="../../Roadmap/index.html">lộ trình Fullstack Developer</a> (hướng B: Java + JavaScript).</p>
+    </div>
+  </section>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p>
+        Spring Boot sub-pillar · Pillar 9 — Programming Language · IT Basic<br/>
+        <a href="../index.html">← Quay lại pillar overview</a>
+      </p>
+    </div>
+  </footer>
+
+  <script src="../shared/js/chapter.js"></script>
+</body>
+</html>

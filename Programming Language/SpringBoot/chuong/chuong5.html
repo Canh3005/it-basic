@@ -1,0 +1,759 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chương 5 — Validation &amp; xử lý lỗi — API không bao giờ "nổ" thô · Spring Boot Sub-pillar</title>
+  <meta name="description" content="Bean Validation với @Valid, các ràng buộc phổ biến, ràng buộc tuỳ biến, thiết kế exception nghiệp vụ, @RestControllerAdvice, ProblemDetail (RFC 9457) và nguyên tắc không lộ thông tin nội bộ." />
+  <meta name="theme-color" content="#4a9a28" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Bitter:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="../../shared/css/base.css">
+  <link rel="stylesheet" href="../css/theme.css">
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="container">
+      <a class="site-logo" href="../../../index.html">
+        <span class="mark mark-spring">Sb</span>
+        Spring Boot · IT Basic
+      </a>
+      <nav>
+        <ul class="site-nav">
+          <li><a href="../../../index.html">IT Basic</a></li>
+          <li><a href="../../index.html">Pillar 9</a></li>
+          <li><a href="../../Java/index.html">Java</a></li>
+          <li><a href="../index.html" class="active">Spring Boot</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <div class="container">
+    <header class="chapter-header">
+      <div class="breadcrumb">
+        <a href="../../../index.html">IT Basic</a><span class="sep">/</span>
+        <a href="../../index.html">Pillar 9</a><span class="sep">/</span>
+        <a href="../index.html">Spring Boot</a><span class="sep">/</span>
+        <span>Chương 5</span>
+      </div>
+      <div class="chapter-num">Chương 05 · Validation &amp; Lỗi</div>
+      <h1 style="font-size: 2.6rem; margin: 0 0 12px; color: var(--ink);">
+        Validation &amp; xử lý lỗi — API không bao giờ "nổ" thô
+      </h1>
+      <p class="lead">
+        Mọi dữ liệu từ ngoài vào đều <strong>không đáng tin</strong>. Và mọi API rồi cũng có lỗi — câu hỏi là client nhận được gì: một <em>stack trace dài 200 dòng</em>, hay một JSON gọn nói rõ <em>trường nào sai, vì sao</em>? Chương này dựng hai hàng rào: <strong>validation</strong> ở cửa vào (Bean Validation), và <strong>xử lý lỗi tập trung</strong> ở cửa ra (<code>@RestControllerAdvice</code> + <code>ProblemDetail</code> chuẩn RFC 9457).
+      </p>
+      <div class="chapter-meta">
+        <span class="item"><strong>Bài tập:</strong> 5</span>
+        <span class="item"><strong>Quiz:</strong> 6</span>
+        <span class="item"><strong>Prerequisites:</strong> Chương 1-4</span>
+      </div>
+    </header>
+
+    <div class="layout">
+
+      <main class="prose">
+
+        <div class="callout callout-goal">
+          <div class="callout-label">🎯 Mục tiêu chương</div>
+          <ul>
+            <li>Dùng <strong>Bean Validation</strong> (<code>@Valid</code>, <code>@NotBlank</code>, <code>@Size</code>, <code>@Email</code>…) trên DTO dạng <code>record</code>.</li>
+            <li>Validate cả <strong>tham số đơn</strong> (<code>@RequestParam</code>, <code>@PathVariable</code>), DTO <strong>lồng nhau</strong> và <strong>danh sách</strong>.</li>
+            <li>Viết <strong>ràng buộc tuỳ biến</strong> (mức trường và mức lớp).</li>
+            <li>Thiết kế <strong>hệ thống exception nghiệp vụ</strong> nhỏ, rõ nghĩa.</li>
+            <li>Xử lý lỗi tập trung bằng **<code>@RestControllerAdvice</code><strong> và </strong><code>ProblemDetail</code>**.</li>
+            <li>Ánh xạ exception → mã HTTP đúng; <strong>không rò rỉ</strong> chi tiết nội bộ.</li>
+            <li>Phân biệt lỗi <strong>validation</strong> (cú pháp/format) và lỗi <strong>nghiệp vụ</strong> (luật kinh doanh).</li>
+          </ul>
+        </div>
+
+        <h2 id="vi-sao">1. Validate ở đâu, và tin ai?</h2>
+
+        <p>Một request đi qua ba lớp kiểm tra khác nhau, mỗi lớp trả lời một câu hỏi khác:</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Lớp</th><th>Câu hỏi</th><th>Ví dụ</th><th>Công cụ</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Cú pháp / định dạng</strong></td><td>Dữ liệu có <em>đúng dạng</em> không?</td><td>Email hợp lệ, tên không rỗng, tuổi ≥ 0</td><td>Bean Validation trên DTO</td></tr>
+              <tr><td><strong>Nghiệp vụ</strong></td><td>Có <em>được phép</em> theo luật không?</td><td>Email đã tồn tại, hết hàng, vượt hạn mức</td><td>Service + exception nghiệp vụ</td></tr>
+              <tr><td><strong>Toàn vẹn dữ liệu</strong></td><td>CSDL có chấp nhận không?</td><td><code>UNIQUE</code>, <code>NOT NULL</code>, khoá ngoại</td><td>Ràng buộc CSDL (lưới an toàn cuối)</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="java-rule"><strong>Validate ở biên (boundary), lặp lại ở tầng cần thiết.</strong> Bean Validation ở controller chặn rác sớm và cho message tốt; nhưng <strong>không bao giờ</strong> thay thế kiểm tra nghiệp vụ trong service hay ràng buộc trong CSDL — client có thể là script, không phải form của bạn. Validation phía frontend chỉ phục vụ trải nghiệm, <strong>không phải bảo mật</strong>.</div>
+
+        <h2 id="bean-validation">2. Bean Validation với <code>@Valid</code></h2>
+
+        <p>Từ Boot 2.3, <code>spring-boot-starter-web</code> <strong>không</strong> còn kéo theo thư viện validation. Thêm riêng:</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>pom.xml</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-kw">&lt;dependency</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;groupId</span><span class="tok-kw">&gt;</span>org.springframework.boot<span class="tok-kw">&lt;/groupId</span><span class="tok-kw">&gt;</span>
+    <span class="tok-kw">&lt;artifactId</span><span class="tok-kw">&gt;</span>spring-boot-starter-validation<span class="tok-kw">&lt;/artifactId</span><span class="tok-kw">&gt;</span>
+<span class="tok-kw">&lt;/dependency</span><span class="tok-kw">&gt;</span></code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>CreateUserRequest.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-kw">public</span> <span class="tok-kw">record</span> <span class="tok-cls">CreateUserRequest</span>(
+
+        <span class="tok-ann">@NotBlank</span>(message = <span class="tok-str">"Tên không được để trống"</span>)
+        <span class="tok-ann">@Size</span>(max = <span class="tok-num">100</span>, message = <span class="tok-str">"Tên tối đa 100 ký tự"</span>)
+        <span class="tok-cls">String</span> name,
+
+        <span class="tok-ann">@NotBlank</span> <span class="tok-ann">@Email</span>
+        <span class="tok-cls">String</span> email,
+
+        <span class="tok-ann">@NotBlank</span>
+        <span class="tok-ann">@Size</span>(min = <span class="tok-num">8</span>, max = <span class="tok-num">72</span>, message = <span class="tok-str">"Mật khẩu 8-72 ký tự"</span>)   <span class="tok-com">// 72 = giới hạn của BCrypt (chương 9)</span>
+        <span class="tok-cls">String</span> password,
+
+        <span class="tok-ann">@NotNull</span> <span class="tok-ann">@Past</span>
+        <span class="tok-cls">LocalDate</span> birthDate,
+
+        <span class="tok-ann">@Valid</span> <span class="tok-ann">@NotNull</span>                                            <span class="tok-com">// @Valid: kiểm tra CẢ bên trong Address</span>
+        <span class="tok-cls">Address</span> address,
+
+        <span class="tok-ann">@Size</span>(max = <span class="tok-num">5</span>)
+        <span class="tok-cls">List</span>&lt;<span class="tok-ann">@NotBlank</span> <span class="tok-ann">@Size</span>(max = <span class="tok-num">30</span>) <span class="tok-cls">String</span>&gt; tags) { }          <span class="tok-com">// kiểm tra từng phần tử trong list</span>
+
+<span class="tok-kw">public</span> <span class="tok-kw">record</span> <span class="tok-cls">Address</span>(
+        <span class="tok-ann">@NotBlank</span> <span class="tok-cls">String</span> street,
+        <span class="tok-ann">@NotBlank</span> <span class="tok-cls">String</span> city,
+        <span class="tok-ann">@Pattern</span>(regexp = <span class="tok-str">"\\d{5,6}"</span>, message = <span class="tok-str">"Mã bưu chính 5-6 chữ số"</span>) <span class="tok-cls">String</span> postalCode) { }</code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Controller</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@PostMapping</span>(<span class="tok-str">"/api/users"</span>)
+<span class="tok-kw">public</span> <span class="tok-cls">ResponseEntity</span>&lt;<span class="tok-cls">UserResponse</span>&gt; <span class="tok-fn">create</span>(<span class="tok-ann">@Valid</span> <span class="tok-ann">@RequestBody</span> <span class="tok-cls">CreateUserRequest</span> req) {   <span class="tok-com">// @Valid kích hoạt kiểm tra</span>
+    <span class="tok-kw">return</span> <span class="tok-cls">ResponseEntity</span>.<span class="tok-fn">status</span>(<span class="tok-cls">HttpStatus</span>.<span class="tok-cls">CREATED</span>).<span class="tok-fn">body</span>(service.<span class="tok-fn">create</span>(req));
+}</code></pre>
+        </div>
+        <p>Nếu có ràng buộc bị vi phạm, Spring <strong>không gọi</strong> method của bạn mà ném <code>MethodArgumentNotValidException</code> ⇒ mặc định trả <code>400</code> (nội dung thô — mục 6 sẽ chuẩn hoá).</p>
+
+        <h3 id="constraints">2.1. Bảng ràng buộc hay dùng</h3>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Annotation</th><th>Áp dụng cho</th><th>Nghĩa</th><th>Lưu ý</th></tr></thead>
+            <tbody>
+              <tr><td><code>@NotNull</code></td><td>mọi kiểu</td><td>Không <code>null</code></td><td>Chuỗi rỗng <code>""</code> vẫn qua!</td></tr>
+              <tr><td><code>@NotEmpty</code></td><td>String, Collection, Map</td><td>Không <code>null</code> và độ dài &gt; 0</td><td><code>" "</code> vẫn qua</td></tr>
+              <tr><td><code>@NotBlank</code></td><td>String</td><td>Không <code>null</code>, không rỗng, không toàn khoảng trắng</td><td>✅ Cho chuỗi nhập từ người dùng</td></tr>
+              <tr><td><code>@Size(min,max)</code></td><td>String, Collection, Map, mảng</td><td>Độ dài/số phần tử trong khoảng</td><td><code>null</code> được coi là hợp lệ</td></tr>
+              <tr><td><code>@Min</code> / <code>@Max</code>, <code>@Positive</code>, <code>@PositiveOrZero</code></td><td>số</td><td>Giới hạn giá trị</td><td><code>@Positive</code> = &gt; 0</td></tr>
+              <tr><td><code>@DecimalMin</code> / <code>@Digits</code></td><td><code>BigDecimal</code></td><td>Giá trị / số chữ số</td><td>Dùng cho tiền</td></tr>
+              <tr><td><code>@Email</code></td><td>String</td><td>Định dạng email</td><td>Rất lỏng — vẫn phải xác minh qua email thật</td></tr>
+              <tr><td><code>@Pattern(regexp)</code></td><td>String</td><td>Khớp regex</td><td>Cẩn thận regex tốn CPU (ReDoS)</td></tr>
+              <tr><td><code>@Past</code> / <code>@Future</code> / <code>@PastOrPresent</code></td><td>ngày giờ</td><td>Quá khứ/tương lai</td><td></td></tr>
+              <tr><td><code>@Valid</code></td><td>đối tượng lồng nhau</td><td>Đi sâu vào kiểm tra tiếp</td><td>Không có <code>@Valid</code> ⇒ bên trong <em>không</em> được kiểm tra</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout callout-gotcha">
+          <div class="callout-label">⚠️ Hầu hết ràng buộc coi <code>null</code> là hợp lệ</div>
+          <p><code>@Size(min=3)</code> hay <code>@Email</code> trên giá trị <code>null</code> <strong>vẫn qua</strong>. Muốn bắt buộc phải cộng thêm <code>@NotNull</code>/<code>@NotBlank</code>. Ngược lại <code>@NotBlank</code> đã bao hàm <code>@NotNull</code>. Quy tắc: trường bắt buộc ⇒ luôn có <code>@NotNull</code> (hoặc <code>@NotBlank</code>/<code>@NotEmpty</code>).</p>
+        </div>
+
+        <h3 id="param-validation">2.2. Validate tham số đơn (query, path)</h3>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>ProductController.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@RestController</span>
+<span class="tok-ann">@RequestMapping</span>(<span class="tok-str">"/api/products"</span>)
+<span class="tok-ann">@Validated</span>                                              <span class="tok-com">// cần cho Spring &lt; 6.1; từ 6.1 có sẵn method validation</span>
+<span class="tok-kw">class</span> <span class="tok-cls">ProductController</span> {
+
+    <span class="tok-ann">@GetMapping</span>(<span class="tok-str">"/{id}"</span>)
+    <span class="tok-cls">Product</span> <span class="tok-fn">get</span>(<span class="tok-ann">@PathVariable</span> <span class="tok-ann">@Positive</span> <span class="tok-kw">long</span> id) { ... }
+
+    <span class="tok-ann">@GetMapping</span>
+    <span class="tok-cls">List</span>&lt;<span class="tok-cls">Product</span>&gt; <span class="tok-fn">search</span>(<span class="tok-ann">@RequestParam</span>(defaultValue = <span class="tok-str">"0"</span>)  <span class="tok-ann">@PositiveOrZero</span> <span class="tok-kw">int</span> page,
+                         <span class="tok-ann">@RequestParam</span>(defaultValue = <span class="tok-str">"20"</span>) <span class="tok-ann">@Min</span>(<span class="tok-num">1</span>) <span class="tok-ann">@Max</span>(<span class="tok-num">100</span>) <span class="tok-kw">int</span> size) { ... }
+}</code></pre>
+        </div>
+        <p>Từ <strong>Spring 6.1 / Boot 3.2</strong>, ràng buộc trên tham số controller được kiểm tra sẵn và ném <code>HandlerMethodValidationException</code> (trước đó là <code>ConstraintViolationException</code> và phải có <code>@Validated</code> ở lớp). Dù phiên bản nào, bạn nên <strong>bắt cả hai</strong> trong handler tập trung.</p>
+
+        <h3 id="groups">2.3. Cùng DTO, luật khác nhau? Dùng DTO riêng</h3>
+
+        <p>Bean Validation có <em>validation groups</em> (<code>@NotNull(groups = OnUpdate.class)</code>), nhưng nó khiến DTO rối. Cách sạch hơn: <strong>hai record riêng</strong> — <code>CreateUserRequest</code> (mọi trường bắt buộc) và <code>UpdateUserRequest</code> (phần lớn tuỳ chọn). Mỗi use case một hợp đồng rõ ràng.</p>
+
+        <h2 id="custom-constraint">3. Ràng buộc tuỳ biến</h2>
+
+
+        <h3 id="field-level">3.1. Mức trường: <code>@StrongPassword</code></h3>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>StrongPassword.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Documented</span>
+<span class="tok-ann">@Constraint</span>(validatedBy = <span class="tok-cls">StrongPasswordValidator</span>.<span class="tok-kw">class</span>)
+<span class="tok-ann">@Target</span>({<span class="tok-cls">ElementType</span>.<span class="tok-cls">FIELD</span>, <span class="tok-cls">ElementType</span>.<span class="tok-cls">PARAMETER</span>, <span class="tok-cls">ElementType</span>.<span class="tok-cls">RECORD_COMPONENT</span>})
+<span class="tok-ann">@Retention</span>(<span class="tok-cls">RetentionPolicy</span>.<span class="tok-cls">RUNTIME</span>)
+<span class="tok-kw">public</span> <span class="tok-ann">@interface</span> <span class="tok-cls">StrongPassword</span> {
+    <span class="tok-cls">String</span> <span class="tok-fn">message</span>() <span class="tok-kw">default</span> <span class="tok-str">"Mật khẩu phải có chữ hoa, chữ thường và chữ số"</span>;
+    <span class="tok-cls">Class</span>&lt;?&gt;[] <span class="tok-fn">groups</span>() <span class="tok-kw">default</span> {};
+    <span class="tok-cls">Class</span>&lt;? <span class="tok-kw">extends</span> <span class="tok-cls">Payload</span>&gt;[] <span class="tok-fn">payload</span>() <span class="tok-kw">default</span> {};
+}
+
+<span class="tok-kw">public</span> <span class="tok-kw">class</span> <span class="tok-cls">StrongPasswordValidator</span> <span class="tok-kw">implements</span> <span class="tok-cls">ConstraintValidator</span>&lt;<span class="tok-cls">StrongPassword</span>, <span class="tok-cls">String</span>&gt; {
+
+    <span class="tok-ann">@Override</span>
+    <span class="tok-kw">public</span> <span class="tok-kw">boolean</span> <span class="tok-fn">isValid</span>(<span class="tok-cls">String</span> value, <span class="tok-cls">ConstraintValidatorContext</span> ctx) {
+        <span class="tok-kw">if</span> (value == <span class="tok-kw">null</span>) <span class="tok-kw">return</span> <span class="tok-kw">true</span>;                  <span class="tok-com">// để @NotBlank lo chuyện null — mỗi ràng buộc một việc</span>
+        <span class="tok-kw">return</span> value.<span class="tok-fn">chars</span>().<span class="tok-fn">anyMatch</span>(<span class="tok-cls">Character</span>::isUpperCase)
+            &amp;&amp; value.<span class="tok-fn">chars</span>().<span class="tok-fn">anyMatch</span>(<span class="tok-cls">Character</span>::isLowerCase)
+            &amp;&amp; value.<span class="tok-fn">chars</span>().<span class="tok-fn">anyMatch</span>(<span class="tok-cls">Character</span>::isDigit);
+    }
+}
+
+<span class="tok-com">// Dùng:  @NotBlank @Size(min = 8, max = 72) @StrongPassword String password</span></code></pre>
+        </div>
+
+        <h3 id="class-level">3.2. Mức lớp: ràng buộc chéo trường</h3>
+
+        <div class="code-wrap">
+          <div class="code-meta"><span>DateRange.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Constraint</span>(validatedBy = <span class="tok-cls">DateRangeValidator</span>.<span class="tok-kw">class</span>)
+<span class="tok-ann">@Target</span>(<span class="tok-cls">ElementType</span>.<span class="tok-cls">TYPE</span>) <span class="tok-ann">@Retention</span>(<span class="tok-cls">RetentionPolicy</span>.<span class="tok-cls">RUNTIME</span>)
+<span class="tok-kw">public</span> <span class="tok-ann">@interface</span> <span class="tok-cls">ValidDateRange</span> {
+    <span class="tok-cls">String</span> <span class="tok-fn">message</span>() <span class="tok-kw">default</span> <span class="tok-str">"Ngày kết thúc phải sau ngày bắt đầu"</span>;
+    <span class="tok-cls">Class</span>&lt;?&gt;[] <span class="tok-fn">groups</span>() <span class="tok-kw">default</span> {};
+    <span class="tok-cls">Class</span>&lt;? <span class="tok-kw">extends</span> <span class="tok-cls">Payload</span>&gt;[] <span class="tok-fn">payload</span>() <span class="tok-kw">default</span> {};
+}
+
+<span class="tok-kw">public</span> <span class="tok-kw">interface</span> <span class="tok-cls">HasDateRange</span> { <span class="tok-cls">LocalDate</span> <span class="tok-fn">from</span>(); <span class="tok-cls">LocalDate</span> <span class="tok-fn">to</span>(); }
+
+<span class="tok-kw">public</span> <span class="tok-kw">class</span> <span class="tok-cls">DateRangeValidator</span> <span class="tok-kw">implements</span> <span class="tok-cls">ConstraintValidator</span>&lt;<span class="tok-cls">ValidDateRange</span>, <span class="tok-cls">HasDateRange</span>&gt; {
+    <span class="tok-ann">@Override</span>
+    <span class="tok-kw">public</span> <span class="tok-kw">boolean</span> <span class="tok-fn">isValid</span>(<span class="tok-cls">HasDateRange</span> v, <span class="tok-cls">ConstraintValidatorContext</span> ctx) {
+        <span class="tok-kw">return</span> v == <span class="tok-kw">null</span> || v.<span class="tok-fn">from</span>() == <span class="tok-kw">null</span> || v.<span class="tok-fn">to</span>() == <span class="tok-kw">null</span> || !v.<span class="tok-fn">to</span>().<span class="tok-fn">isBefore</span>(v.<span class="tok-fn">from</span>());
+    }
+}
+
+<span class="tok-ann">@ValidDateRange</span>
+<span class="tok-kw">public</span> <span class="tok-kw">record</span> <span class="tok-cls">ReportRequest</span>(<span class="tok-ann">@NotNull</span> <span class="tok-cls">LocalDate</span> from, <span class="tok-ann">@NotNull</span> <span class="tok-cls">LocalDate</span> to) <span class="tok-kw">implements</span> <span class="tok-cls">HasDateRange</span> { }</code></pre>
+        </div>
+        <div class="callout callout-tip">
+          <div class="callout-label">💡 Validator có thể là bean Spring</div>
+          <p>Lớp <code>ConstraintValidator</code> được Spring tạo nên có thể <strong>tiêm bean</strong> (ví dụ <code>UserRepository</code> để kiểm tra email chưa tồn tại). Nhưng cẩn thận: kiểm tra "đã tồn tại" bằng validator vẫn có <em>race condition</em> — hai request cùng lúc cùng qua. Ràng buộc <code>UNIQUE</code> của CSDL là chốt chặn thật (bắt <code>DataIntegrityViolationException</code>, mục 7).</p>
+        </div>
+
+        <h2 id="exception-nghiep-vu">4. Thiết kế exception nghiệp vụ</h2>
+
+        <p>Thay vì <code>ResponseStatusException</code> rải khắp nơi, định nghĩa một nhóm exception nhỏ, đặt tên theo <strong>ý nghĩa nghiệp vụ</strong> (không theo mã HTTP):</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Exceptions.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-kw">public</span> <span class="tok-kw">abstract</span> <span class="tok-kw">class</span> <span class="tok-cls">AppException</span> <span class="tok-kw">extends</span> <span class="tok-cls">RuntimeException</span> {
+    <span class="tok-kw">private</span> <span class="tok-kw">final</span> <span class="tok-cls">String</span> code;                         <span class="tok-com">// mã lỗi ổn định cho client xử lý: "USER_NOT_FOUND"</span>
+    <span class="tok-kw">protected</span> <span class="tok-cls">AppException</span>(<span class="tok-cls">String</span> code, <span class="tok-cls">String</span> message) { <span class="tok-kw">super</span>(message); <span class="tok-kw">this</span>.code = code; }
+    <span class="tok-kw">public</span> <span class="tok-cls">String</span> <span class="tok-fn">code</span>() { <span class="tok-kw">return</span> code; }
+}
+
+<span class="tok-kw">public</span> <span class="tok-kw">class</span> <span class="tok-cls">NotFoundException</span> <span class="tok-kw">extends</span> <span class="tok-cls">AppException</span> {
+    <span class="tok-kw">public</span> <span class="tok-cls">NotFoundException</span>(<span class="tok-cls">String</span> resource, <span class="tok-cls">Object</span> id) {
+        <span class="tok-kw">super</span>(resource.<span class="tok-fn">toUpperCase</span>() + <span class="tok-str">"_NOT_FOUND"</span>, resource + <span class="tok-str">" không tồn tại: "</span> + id);
+    }
+}
+
+<span class="tok-kw">public</span> <span class="tok-kw">class</span> <span class="tok-cls">ConflictException</span> <span class="tok-kw">extends</span> <span class="tok-cls">AppException</span> {          <span class="tok-com">// trùng dữ liệu, sai trạng thái</span>
+    <span class="tok-kw">public</span> <span class="tok-cls">ConflictException</span>(<span class="tok-cls">String</span> code, <span class="tok-cls">String</span> message) { <span class="tok-kw">super</span>(code, message); }
+}
+
+<span class="tok-kw">public</span> <span class="tok-kw">class</span> <span class="tok-cls">BusinessRuleException</span> <span class="tok-kw">extends</span> <span class="tok-cls">AppException</span> {      <span class="tok-com">// vi phạm luật kinh doanh</span>
+    <span class="tok-kw">public</span> <span class="tok-cls">BusinessRuleException</span>(<span class="tok-cls">String</span> code, <span class="tok-cls">String</span> message) { <span class="tok-kw">super</span>(code, message); }
+}</code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>UserService.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@Service</span>
+<span class="tok-kw">class</span> <span class="tok-cls">UserService</span> {
+    <span class="tok-cls">User</span> <span class="tok-fn">getOrThrow</span>(<span class="tok-kw">long</span> id) {
+        <span class="tok-kw">return</span> repo.<span class="tok-fn">findById</span>(id).<span class="tok-fn">orElseThrow</span>(() -&gt; <span class="tok-kw">new</span> <span class="tok-cls">NotFoundException</span>(<span class="tok-str">"user"</span>, id));
+    }
+
+    <span class="tok-kw">void</span> <span class="tok-fn">rutTien</span>(<span class="tok-kw">long</span> userId, <span class="tok-kw">long</span> soTien) {
+        <span class="tok-kw">if</span> (soTien &gt; <span class="tok-fn">soDu</span>(userId))
+            <span class="tok-kw">throw</span> <span class="tok-kw">new</span> <span class="tok-cls">BusinessRuleException</span>(<span class="tok-str">"INSUFFICIENT_BALANCE"</span>, <span class="tok-str">"Số dư không đủ"</span>);
+    }
+}</code></pre>
+        </div>
+        <div class="java-rule"><em>*Dùng exception *unchecked</em> (<code>RuntimeException</code>) cho lỗi nghiệp vụ.<em>* Spring rollback transaction mặc định chỉ với unchecked (chương 7). Và tầng service không nên biết "404/409" là gì — nó nói *chuyện gì sai</em>, tầng web quyết định <em>mã nào</em>.</div>
+
+        <h2 id="advice">5. <code>@RestControllerAdvice</code> — một nơi bắt mọi lỗi</h2>
+
+        <p><code>@RestControllerAdvice</code> là bean toàn cục; các method <code>@ExceptionHandler</code> bên trong bắt exception ném ra từ <strong>bất kỳ controller nào</strong>:</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>GlobalExceptionHandler.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@RestControllerAdvice</span>
+<span class="tok-kw">class</span> <span class="tok-cls">GlobalExceptionHandler</span> {
+
+    <span class="tok-kw">private</span> <span class="tok-kw">static</span> <span class="tok-kw">final</span> <span class="tok-cls">Logger</span> log = <span class="tok-cls">LoggerFactory</span>.<span class="tok-fn">getLogger</span>(<span class="tok-cls">GlobalExceptionHandler</span>.<span class="tok-kw">class</span>);
+
+    <span class="tok-ann">@ExceptionHandler</span>(<span class="tok-cls">NotFoundException</span>.<span class="tok-kw">class</span>)
+    <span class="tok-cls">ResponseEntity</span>&lt;<span class="tok-cls">ProblemDetail</span>&gt; <span class="tok-fn">notFound</span>(<span class="tok-cls">NotFoundException</span> ex) {
+        <span class="tok-kw">return</span> <span class="tok-fn">problem</span>(<span class="tok-cls">HttpStatus</span>.<span class="tok-cls">NOT_FOUND</span>, ex);
+    }
+
+    <span class="tok-ann">@ExceptionHandler</span>(<span class="tok-cls">ConflictException</span>.<span class="tok-kw">class</span>)
+    <span class="tok-cls">ResponseEntity</span>&lt;<span class="tok-cls">ProblemDetail</span>&gt; <span class="tok-fn">conflict</span>(<span class="tok-cls">ConflictException</span> ex) {
+        <span class="tok-kw">return</span> <span class="tok-fn">problem</span>(<span class="tok-cls">HttpStatus</span>.<span class="tok-cls">CONFLICT</span>, ex);
+    }
+
+    <span class="tok-ann">@ExceptionHandler</span>(<span class="tok-cls">BusinessRuleException</span>.<span class="tok-kw">class</span>)
+    <span class="tok-cls">ResponseEntity</span>&lt;<span class="tok-cls">ProblemDetail</span>&gt; <span class="tok-fn">business</span>(<span class="tok-cls">BusinessRuleException</span> ex) {
+        <span class="tok-kw">return</span> <span class="tok-fn">problem</span>(<span class="tok-cls">HttpStatus</span>.<span class="tok-cls">UNPROCESSABLE_ENTITY</span>, ex);
+    }
+
+    <span class="tok-kw">private</span> <span class="tok-cls">ResponseEntity</span>&lt;<span class="tok-cls">ProblemDetail</span>&gt; <span class="tok-fn">problem</span>(<span class="tok-cls">HttpStatus</span> status, <span class="tok-cls">AppException</span> ex) {
+        <span class="tok-cls">ProblemDetail</span> pd = <span class="tok-cls">ProblemDetail</span>.<span class="tok-fn">forStatusAndDetail</span>(status, ex.<span class="tok-fn">getMessage</span>());
+        pd.<span class="tok-fn">setTitle</span>(status.<span class="tok-fn">getReasonPhrase</span>());
+        pd.<span class="tok-fn">setProperty</span>(<span class="tok-str">"code"</span>, ex.<span class="tok-fn">code</span>());                  <span class="tok-com">// trường mở rộng cho client</span>
+        <span class="tok-kw">return</span> <span class="tok-cls">ResponseEntity</span>.<span class="tok-fn">status</span>(status).<span class="tok-fn">body</span>(pd);
+    }
+
+    <span class="tok-com">/** Lưới an toàn cuối: bất cứ thứ gì chưa được xử lý. */</span>
+    <span class="tok-ann">@ExceptionHandler</span>(<span class="tok-cls">Exception</span>.<span class="tok-kw">class</span>)
+    <span class="tok-cls">ResponseEntity</span>&lt;<span class="tok-cls">ProblemDetail</span>&gt; <span class="tok-fn">unexpected</span>(<span class="tok-cls">Exception</span> ex) {
+        <span class="tok-cls">String</span> errorId = <span class="tok-cls">UUID</span>.<span class="tok-fn">randomUUID</span>().<span class="tok-fn">toString</span>();
+        log.<span class="tok-fn">error</span>(<span class="tok-str">"Lỗi không lường trước [errorId={}]"</span>, errorId, ex);            <span class="tok-com">// chi tiết vào LOG</span>
+        <span class="tok-cls">ProblemDetail</span> pd = <span class="tok-cls">ProblemDetail</span>.<span class="tok-fn">forStatusAndDetail</span>(<span class="tok-cls">HttpStatus</span>.<span class="tok-cls">INTERNAL_SERVER_ERROR</span>,
+                <span class="tok-str">"Đã có lỗi xảy ra. Vui lòng liên hệ hỗ trợ kèm mã lỗi."</span>);           <span class="tok-com">// client: thông điệp chung</span>
+        pd.<span class="tok-fn">setProperty</span>(<span class="tok-str">"errorId"</span>, errorId);
+        <span class="tok-kw">return</span> <span class="tok-cls">ResponseEntity</span>.<span class="tok-fn">internalServerError</span>().<span class="tok-fn">body</span>(pd);
+    }
+}</code></pre>
+        </div>
+
+        <h3 id="problem-detail">5.1. <code>ProblemDetail</code> — định dạng lỗi chuẩn</h3>
+
+        <p><strong>RFC 9457</strong> (trước đó là RFC 7807) định nghĩa media type <code>application/problem+json</code> với các trường chuẩn. Spring 6 hỗ trợ sẵn qua lớp <code>ProblemDetail</code>:</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Phản hồi</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-kw">HTTP/1.1</span><span class="tok-num"> 404</span>
+<span class="tok-cls">Content-Type</span>: application/problem+json
+
+{
+  <span class="tok-cls">"type"</span>: <span class="tok-str">"about:blank"</span>,
+  <span class="tok-cls">"title"</span>: <span class="tok-str">"Not Found"</span>,
+  <span class="tok-cls">"status"</span>: <span class="tok-num">404</span>,
+  <span class="tok-cls">"detail"</span>: <span class="tok-str">"user không tồn tại: 42"</span>,
+  <span class="tok-cls">"instance"</span>: <span class="tok-str">"/api/users/42"</span>,
+  <span class="tok-cls">"code"</span>: <span class="tok-str">"USER_NOT_FOUND"</span>
+}</code></pre>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Trường</th><th>Ý nghĩa</th></tr></thead>
+            <tbody>
+              <tr><td><code>type</code></td><td>URI mô tả loại lỗi (mặc định <code>about:blank</code>)</td></tr>
+              <tr><td><code>title</code></td><td>Tóm tắt ngắn, không đổi theo từng lần</td></tr>
+              <tr><td><code>status</code></td><td>Mã HTTP</td></tr>
+              <tr><td><code>detail</code></td><td>Giải thích cụ thể cho lần lỗi này</td></tr>
+              <tr><td><code>instance</code></td><td>Đường dẫn request gây lỗi</td></tr>
+              <tr><td><em>(tuỳ ý)</em> <code>code</code>, <code>errors</code>…</td><td>Trường mở rộng của bạn qua <code>pd.setProperty(...)</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout callout-note">
+          <div class="callout-label">📌 Bật định dạng chuẩn cho lỗi có sẵn của Spring</div>
+          <p><code>spring.mvc.problemdetails.enabled=true</code> làm các exception nội bộ của MVC (404 route, 405, 415, 400…) cũng trả <code>application/problem+json</code> thay vì định dạng riêng của Boot — để <em>mọi</em> lỗi trong API cùng một khuôn.</p>
+        </div>
+
+        <h2 id="xu-ly-validation">6. Chuẩn hoá lỗi validation</h2>
+
+        <p>Mặc định <code>MethodArgumentNotValidException</code> cho client rất ít thông tin dễ dùng. Ta mở rộng <code>ResponseEntityExceptionHandler</code> (đã có sẵn handler cho ~20 exception của MVC) và ghi đè xử lý validation:</p>
+        <div class="code-wrap">
+          <div class="code-meta"><span>ValidationHandler.java</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@RestControllerAdvice</span>
+<span class="tok-kw">class</span> <span class="tok-cls">ApiExceptionHandler</span> <span class="tok-kw">extends</span> <span class="tok-cls">ResponseEntityExceptionHandler</span> {
+
+    <span class="tok-ann">@Override</span>
+    <span class="tok-kw">protected</span> <span class="tok-cls">ResponseEntity</span>&lt;<span class="tok-cls">Object</span>&gt; <span class="tok-fn">handleMethodArgumentNotValid</span>(
+            <span class="tok-cls">MethodArgumentNotValidException</span> ex, <span class="tok-cls">HttpHeaders</span> headers, <span class="tok-cls">HttpStatusCode</span> status, <span class="tok-cls">WebRequest</span> request) {
+
+        <span class="tok-cls">Map</span>&lt;<span class="tok-cls">String</span>, <span class="tok-cls">List</span>&lt;<span class="tok-cls">String</span>&gt;&gt; errors = ex.<span class="tok-fn">getBindingResult</span>().<span class="tok-fn">getFieldErrors</span>().<span class="tok-fn">stream</span>()
+                .<span class="tok-fn">collect</span>(<span class="tok-cls">Collectors</span>.<span class="tok-fn">groupingBy</span>(
+                        <span class="tok-cls">FieldError</span>::getField,                                   <span class="tok-com">// "address.city", "tags[2]"</span>
+                        <span class="tok-cls">TreeMap</span>::<span class="tok-kw">new</span>,
+                        <span class="tok-cls">Collectors</span>.<span class="tok-fn">mapping</span>(fe -&gt; <span class="tok-cls">Objects</span>.<span class="tok-fn">requireNonNullElse</span>(fe.<span class="tok-fn">getDefaultMessage</span>(), <span class="tok-str">"không hợp lệ"</span>),
+                                           <span class="tok-cls">Collectors</span>.<span class="tok-fn">toList</span>())));
+
+        <span class="tok-cls">ProblemDetail</span> pd = <span class="tok-cls">ProblemDetail</span>.<span class="tok-fn">forStatusAndDetail</span>(<span class="tok-cls">HttpStatus</span>.<span class="tok-cls">BAD_REQUEST</span>, <span class="tok-str">"Dữ liệu gửi lên không hợp lệ"</span>);
+        pd.<span class="tok-fn">setTitle</span>(<span class="tok-str">"Validation failed"</span>);
+        pd.<span class="tok-fn">setProperty</span>(<span class="tok-str">"code"</span>, <span class="tok-str">"VALIDATION_FAILED"</span>);
+        pd.<span class="tok-fn">setProperty</span>(<span class="tok-str">"errors"</span>, errors);
+        <span class="tok-kw">return</span> <span class="tok-fn">handleExceptionInternal</span>(ex, pd, headers, <span class="tok-cls">HttpStatus</span>.<span class="tok-cls">BAD_REQUEST</span>, request);
+    }
+
+    <span class="tok-com">// Tham số đơn (@RequestParam/@PathVariable) vi phạm ràng buộc — Spring 6.1+</span>
+    <span class="tok-ann">@Override</span>
+    <span class="tok-kw">protected</span> <span class="tok-cls">ResponseEntity</span>&lt;<span class="tok-cls">Object</span>&gt; <span class="tok-fn">handleHandlerMethodValidationException</span>(
+            <span class="tok-cls">HandlerMethodValidationException</span> ex, <span class="tok-cls">HttpHeaders</span> headers, <span class="tok-cls">HttpStatusCode</span> status, <span class="tok-cls">WebRequest</span> request) {
+        <span class="tok-cls">ProblemDetail</span> pd = <span class="tok-cls">ProblemDetail</span>.<span class="tok-fn">forStatusAndDetail</span>(<span class="tok-cls">HttpStatus</span>.<span class="tok-cls">BAD_REQUEST</span>, <span class="tok-str">"Tham số không hợp lệ"</span>);
+        pd.<span class="tok-fn">setProperty</span>(<span class="tok-str">"code"</span>, <span class="tok-str">"VALIDATION_FAILED"</span>);
+        <span class="tok-kw">return</span> <span class="tok-fn">handleExceptionInternal</span>(ex, pd, headers, <span class="tok-cls">HttpStatus</span>.<span class="tok-cls">BAD_REQUEST</span>, request);
+    }
+
+    <span class="tok-com">// JSON sai cú pháp hoặc sai kiểu: {"birthDate": "hôm qua"}</span>
+    <span class="tok-ann">@Override</span>
+    <span class="tok-kw">protected</span> <span class="tok-cls">ResponseEntity</span>&lt;<span class="tok-cls">Object</span>&gt; <span class="tok-fn">handleHttpMessageNotReadable</span>(
+            <span class="tok-cls">HttpMessageNotReadableException</span> ex, <span class="tok-cls">HttpHeaders</span> headers, <span class="tok-cls">HttpStatusCode</span> status, <span class="tok-cls">WebRequest</span> request) {
+        <span class="tok-cls">ProblemDetail</span> pd = <span class="tok-cls">ProblemDetail</span>.<span class="tok-fn">forStatusAndDetail</span>(<span class="tok-cls">HttpStatus</span>.<span class="tok-cls">BAD_REQUEST</span>, <span class="tok-str">"Body không phải JSON hợp lệ"</span>);
+        pd.<span class="tok-fn">setProperty</span>(<span class="tok-str">"code"</span>, <span class="tok-str">"MALFORMED_JSON"</span>);
+        <span class="tok-kw">return</span> <span class="tok-fn">handleExceptionInternal</span>(ex, pd, headers, <span class="tok-cls">HttpStatus</span>.<span class="tok-cls">BAD_REQUEST</span>, request);
+    }
+}</code></pre>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Phản hồi khi gửi dữ liệu sai</span><button class="copy-btn">Copy</button></div>
+<pre><code>{
+  <span class="tok-cls">"type"</span>: <span class="tok-str">"about:blank"</span>,
+  <span class="tok-cls">"title"</span>: <span class="tok-str">"Validation failed"</span>,
+  <span class="tok-cls">"status"</span>: <span class="tok-num">400</span>,
+  <span class="tok-cls">"detail"</span>: <span class="tok-str">"Dữ liệu gửi lên không hợp lệ"</span>,
+  <span class="tok-cls">"instance"</span>: <span class="tok-str">"/api/users"</span>,
+  <span class="tok-cls">"code"</span>: <span class="tok-str">"VALIDATION_FAILED"</span>,
+  <span class="tok-cls">"errors"</span>: {
+    <span class="tok-cls">"email"</span>:        [<span class="tok-str">"must be a well-formed email address"</span>],
+    <span class="tok-cls">"name"</span>:         [<span class="tok-str">"Tên không được để trống"</span>],
+    <span class="tok-cls">"address.city"</span>: [<span class="tok-str">"must not be blank"</span>],
+    <span class="tok-cls">"password"</span>:     [<span class="tok-str">"Mật khẩu 8-72 ký tự"</span>, <span class="tok-str">"Mật khẩu phải có chữ hoa, chữ thường và chữ số"</span>]
+  }
+}</code></pre>
+        </div>
+        <p>Frontend có thể gắn trực tiếp <code>errors["email"]</code> vào đúng ô nhập — đó là mục đích của việc có cấu trúc thay vì một chuỗi lỗi.</p>
+        <div class="java-note">
+          <h4>Đa ngôn ngữ cho message</h4>
+          <p>Thay vì viết cứng tiếng Việt, đặt <code>message = "{user.name.blank}"</code> và khai báo trong <code>ValidationMessages.properties</code> / <code>ValidationMessages_vi.properties</code>; Hibernate Validator chọn theo <code>Accept-Language</code>. Với dự án một thị trường, message cứng là đủ.</p>
+        </div>
+
+        <h2 id="anh-xa">7. Bản đồ exception → mã HTTP</h2>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Exception</th><th>Mã</th><th>Khi nào</th></tr></thead>
+            <tbody>
+              <tr><td><code>MethodArgumentNotValidException</code></td><td>400</td><td><code>@Valid</code> trên body thất bại</td></tr>
+              <tr><td><code>HandlerMethodValidationException</code> / <code>ConstraintViolationException</code></td><td>400</td><td>Ràng buộc trên tham số đơn thất bại</td></tr>
+              <tr><td><code>HttpMessageNotReadableException</code></td><td>400</td><td>JSON hỏng / sai kiểu</td></tr>
+              <tr><td><code>MethodArgumentTypeMismatchException</code></td><td>400</td><td><code>/users/abc</code> khi cần số</td></tr>
+              <tr><td><code>AuthenticationException</code></td><td>401</td><td>Chưa/không xác thực (chương 9)</td></tr>
+              <tr><td><code>AccessDeniedException</code></td><td>403</td><td>Thiếu quyền (chương 9)</td></tr>
+              <tr><td><code>NotFoundException</code> (của bạn)</td><td>404</td><td>Không thấy tài nguyên</td></tr>
+              <tr><td><code>HttpRequestMethodNotSupportedException</code></td><td>405</td><td>Sai phương thức</td></tr>
+              <tr><td><code>DataIntegrityViolationException</code></td><td>409</td><td>Vi phạm <code>UNIQUE</code>/khoá ngoại — <strong>bắt và dịch</strong>, đừng để lộ SQL</td></tr>
+              <tr><td><code>ObjectOptimisticLockingFailureException</code></td><td>409</td><td>Xung đột phiên bản (chương 7)</td></tr>
+              <tr><td><code>BusinessRuleException</code> (của bạn)</td><td>422</td><td>Vi phạm luật nghiệp vụ</td></tr>
+              <tr><td><code>Exception</code> (còn lại)</td><td>500</td><td>Lưới an toàn: log chi tiết, trả thông điệp chung</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>Dịch lỗi CSDL</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-ann">@ExceptionHandler</span>(<span class="tok-cls">DataIntegrityViolationException</span>.<span class="tok-kw">class</span>)
+<span class="tok-cls">ResponseEntity</span>&lt;<span class="tok-cls">ProblemDetail</span>&gt; <span class="tok-fn">integrity</span>(<span class="tok-cls">DataIntegrityViolationException</span> ex) {
+    log.<span class="tok-fn">warn</span>(<span class="tok-str">"Vi phạm toàn vẹn dữ liệu"</span>, ex);                       <span class="tok-com">// chi tiết SQL ở log, KHÔNG ra client</span>
+    <span class="tok-cls">ProblemDetail</span> pd = <span class="tok-cls">ProblemDetail</span>.<span class="tok-fn">forStatusAndDetail</span>(<span class="tok-cls">HttpStatus</span>.<span class="tok-cls">CONFLICT</span>,
+            <span class="tok-str">"Dữ liệu bị trùng hoặc vi phạm ràng buộc."</span>);
+    pd.<span class="tok-fn">setProperty</span>(<span class="tok-str">"code"</span>, <span class="tok-str">"DATA_CONFLICT"</span>);
+    <span class="tok-kw">return</span> <span class="tok-cls">ResponseEntity</span>.<span class="tok-fn">status</span>(<span class="tok-cls">HttpStatus</span>.<span class="tok-cls">CONFLICT</span>).<span class="tok-fn">body</span>(pd);
+}</code></pre>
+        </div>
+
+        <h2 id="khong-ro-ri">8. Không rò rỉ thông tin nội bộ</h2>
+
+        <div class="callout callout-warning">
+          <div class="callout-label">🔒 Thông báo lỗi là bề mặt tấn công</div>
+          <p>Stack trace, tên bảng/cột, câu SQL, đường dẫn file, phiên bản thư viện… đều giúp kẻ tấn công. <strong>Chi tiết vào log, thông điệp chung ra client</strong> — kèm <code>errorId</code> để đội hỗ trợ tra log.</p>
+        </div>
+        <div class="code-wrap">
+          <div class="code-meta"><span>application.yml</span><button class="copy-btn">Copy</button></div>
+<pre><code><span class="tok-cls">server</span>:
+  <span class="tok-cls">error</span>:
+    <span class="tok-cls">include-message</span>: never<span class="tok-com">          # mặc định đã là never từ Boot 2.3</span>
+    <span class="tok-cls">include-stacktrace</span>: never
+    <span class="tok-cls">include-binding-errors</span>: never<span class="tok-com">   # lỗi mặc định của Boot không kèm chi tiết (ta dùng handler riêng)</span></code></pre>
+        </div>
+        <ul>
+          <li><strong>Đừng</strong> <code>return ResponseEntity.status(500).body(ex.getMessage())</code> — message của exception bất kỳ có thể chứa SQL hay đường dẫn.</li>
+          <li><strong>Đừng</strong> phân biệt "email không tồn tại" với "mật khẩu sai" ở màn đăng nhập (lộ danh sách tài khoản) — trả cùng một thông điệp.</li>
+          <li><strong>Hãy</strong> log lỗi 5xx ở mức <code>ERROR</code> kèm stack trace + <code>errorId</code> + <code>requestId</code> (chương 4); lỗi 4xx ở mức <code>WARN</code>/<code>INFO</code> (đó là lỗi của client, đừng làm ngập alert).</li>
+        </ul>
+
+        <h2 id="cheat-sheet">9. Cheat sheet chương 5</h2>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Cần gì</th><th>Làm gì</th></tr></thead>
+            <tbody>
+              <tr><td>Kiểm tra body</td><td><code>@Valid @RequestBody Dto</code> + ràng buộc trên <code>record</code></td></tr>
+              <tr><td>Trường bắt buộc</td><td><code>@NotBlank</code> (String) / <code>@NotNull</code> (khác) — <code>@Size</code> một mình <strong>không</strong> bắt buộc</td></tr>
+              <tr><td>DTO lồng nhau / list</td><td><code>@Valid</code> trên trường; <code>List&lt;@NotBlank String&gt;</code></td></tr>
+              <tr><td>Luật riêng</td><td><code>@Constraint</code> + <code>ConstraintValidator</code></td></tr>
+              <tr><td>Lỗi nghiệp vụ</td><td>Exception unchecked kế thừa <code>AppException</code> (có <code>code</code>)</td></tr>
+              <tr><td>Bắt tập trung</td><td><code>@RestControllerAdvice</code> + <code>ProblemDetail</code></td></tr>
+              <tr><td>Mọi lỗi cùng khuôn</td><td><code>spring.mvc.problemdetails.enabled=true</code> + extend <code>ResponseEntityExceptionHandler</code></td></tr>
+              <tr><td>Lỗi 5xx</td><td>Log chi tiết + <code>errorId</code>; trả thông điệp chung</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="bai-tap">Bài tập</h2>
+
+        <div class="exercises">
+
+          <div class="exercise">
+            <h4>Đăng ký người dùng</h4>
+            <div class="exercise-body">
+              <p>Viết <code>POST /api/register</code> nhận <code>RegisterRequest(username, email, password, age, interests)</code>:</p>
+              <ul>
+                <li><code>username</code>: 3-20 ký tự, chỉ chữ/số/<code>_</code>; <code>email</code> hợp lệ; <code>password</code> 8-72 + <code>@StrongPassword</code> tự viết.</li>
+                <li><code>age</code> ≥ 13; <code>interests</code> tối đa 5 phần tử, mỗi phần tử không rỗng.</li>
+                <li>Gửi dữ liệu sai nhiều chỗ cùng lúc — response phải liệt kê <strong>tất cả</strong> lỗi, không chỉ lỗi đầu tiên.</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p><code>@Pattern(regexp = "^[A-Za-z0-9_]{3,20}$")</code> (Java string cần <code>\\w</code>...). Bean Validation luôn gom <em>mọi</em> vi phạm vào một <code>MethodArgumentNotValidException</code> — nên <code>errors</code> là map nhiều khoá.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Ràng buộc chéo trường</h4>
+            <div class="exercise-body">
+              <p>Tạo <code>@PasswordsMatch</code> mức lớp cho <code>ChangePasswordRequest(oldPassword, newPassword, confirmPassword)</code>: <code>newPassword</code> phải bằng <code>confirmPassword</code> và khác <code>oldPassword</code>.</p>
+              <ul>
+                <li>Lỗi nên gắn vào trường <code>confirmPassword</code>, không phải toàn đối tượng.</li>
+                <li>Gợi ý: trong <code>isValid</code>, dùng <code>ctx.disableDefaultConstraintViolation()</code> và <code>ctx.buildConstraintViolationWithTemplate(...).addPropertyNode("confirmPassword").addConstraintViolation()</code>.</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Không gắn <code>addPropertyNode</code>, lỗi nằm ở khoá rỗng/<code>ChangePasswordRequest</code> và frontend không biết tô đỏ ô nào. Nhớ trả <code>false</code> sau khi build violation tuỳ biến.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Cây exception và handler</h4>
+            <div class="exercise-body">
+              <p>Xây <code>AppException</code> → <code>NotFoundException</code>, <code>ConflictException</code>, <code>BusinessRuleException</code> và <code>GlobalExceptionHandler</code> như mục 4-5.</p>
+              <ul>
+                <li>Thêm API <code>POST /api/transfer</code> ném <code>BusinessRuleException("INSUFFICIENT_BALANCE")</code>.</li>
+                <li>Viết <strong>test</strong> (MockMvc, chương 11 sẽ học kỹ — thử trước bằng <code>curl</code>) kiểm tra <code>status=422</code> và <code>code</code>.</li>
+                <li>Cố tình ném <code>NullPointerException</code> — client nhận gì? Log có gì?</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>NPE đi vào <code>@ExceptionHandler(Exception.class)</code>: client thấy 500 + <code>errorId</code>; log có stack trace đầy đủ cùng <code>errorId</code>. Đó là hợp đồng lỗi 5xx đúng.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Race condition của "email đã tồn tại"</h4>
+            <div class="exercise-body">
+              <p>Cài đặt đăng ký với kiểm tra <code>repo.existsByEmail(email)</code> rồi <code>save</code>. Dùng 2 thread (hoặc <code>curl</code> song song) gửi cùng email.</p>
+              <ul>
+                <li>Quan sát: có thể cả hai cùng qua <code>existsByEmail</code>?</li>
+                <li>Thêm ràng buộc <code>UNIQUE(email)</code> ở CSDL và bắt <code>DataIntegrityViolationException</code> → 409.</li>
+                <li>Kết luận: validator/exists-check chỉ là <em>tối ưu trải nghiệm</em>, ràng buộc CSDL mới là <em>đảm bảo</em>.</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>(Làm sau chương 6 nếu chưa có JPA — có thể mô phỏng bằng <code>ConcurrentHashMap</code> + <code>Thread.sleep</code> giữa <code>check</code> và <code>put</code>.) Mẫu đúng: <em>thử ghi trước, bắt lỗi trùng</em> thay vì <em>hỏi rồi mới ghi</em>.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="exercise">
+            <h4>Kiểm tra rò rỉ</h4>
+            <div class="exercise-body">
+              <p>Gửi các request lỗi sau và đọc kỹ response: JSON thiếu dấu <code>}</code>; <code>GET /api/users/abc</code>; <code>POST</code> với <code>Content-Type: text/plain</code>; một endpoint cố tình ném <code>new RuntimeException("jdbc:postgresql://prod-db:5432 password=...")</code>.</p>
+              <ul>
+                <li>Có response nào để lộ nội bộ không?</li>
+                <li>Sửa để tất cả cùng định dạng <code>application/problem+json</code>, không lộ gì.</li>
+              </ul>
+              <details class="exercise-hint">
+                <summary>Gợi ý</summary>
+                <div class="hint-content">
+                  <p>Bật <code>spring.mvc.problemdetails.enabled=true</code>, extend <code>ResponseEntityExceptionHandler</code>, và đảm bảo <code>@ExceptionHandler(Exception.class)</code> trả thông điệp chung. Đừng bao giờ đưa <code>ex.getMessage()</code> của exception <em>không phải của bạn</em> ra ngoài.</p>
+                </div>
+              </details>
+            </div>
+          </div>
+        </div>
+
+        <h2 id="quiz">Quiz</h2>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q1</span>
+            <div class="quiz-q-text"><p><code>@NotNull</code>, <code>@NotEmpty</code>, <code>@NotBlank</code> khác nhau thế nào?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p><code>@NotNull</code>: không <code>null</code> (chuỗi rỗng vẫn qua). <code>@NotEmpty</code>: không <code>null</code> và độ dài &gt; 0 (chuỗi <code>" "</code> vẫn qua). <code>@NotBlank</code>: không <code>null</code>, không rỗng, không toàn khoảng trắng — chỉ dùng cho <code>String</code>. Với input người dùng, <code>@NotBlank</code> là lựa chọn thường đúng.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q2</span>
+            <div class="quiz-q-text"><p>Vì sao <code>@Size(min = 3)</code> không bắt buộc trường có giá trị?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Phần lớn ràng buộc Bean Validation coi <code>null</code> là <strong>hợp lệ</strong> (để mỗi ràng buộc làm một việc). Muốn bắt buộc phải thêm <code>@NotNull</code>/<code>@NotBlank</code>.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q3</span>
+            <div class="quiz-q-text"><p><code>@Valid</code> đặt ở đâu và vì sao cần ở trường lồng nhau?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Đặt trước <code>@RequestBody</code> để kích hoạt kiểm tra DTO; và đặt trên <strong>trường là đối tượng/danh sách lồng nhau</strong> để Hibernate Validator đi sâu vào. Thiếu <code>@Valid</code> ở trường ⇒ ràng buộc <em>bên trong</em> đối tượng đó bị bỏ qua.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q4</span>
+            <div class="quiz-q-text"><p>Vì sao nên có exception nghiệp vụ riêng thay vì ném <code>ResponseStatusException</code> khắp nơi?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Tầng service chỉ nên diễn đạt <em>chuyện gì sai</em> (<code>NotFoundException</code>, <code>BusinessRuleException</code>) chứ không biết HTTP. Tầng web (<code>@RestControllerAdvice</code>) quyết định mã và định dạng — một nơi duy nhất, nhất quán, dễ đổi. Service cũng tái dùng được ngoài ngữ cảnh web (job, message listener).</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q5</span>
+            <div class="quiz-q-text"><p><code>ProblemDetail</code> / RFC 9457 mang lại gì?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Một <strong>khuôn lỗi chuẩn</strong> (<code>type</code>, <code>title</code>, <code>status</code>, <code>detail</code>, <code>instance</code> + trường mở rộng) với media type <code>application/problem+json</code>. Client/ thư viện nhiều ngôn ngữ đã hiểu sẵn; Spring 6 hỗ trợ trực tiếp bằng lớp <code>ProblemDetail</code>.</p>
+            </div>
+          </details>
+        </div>
+
+        <div class="quiz">
+          <div class="quiz-question">
+            <span class="quiz-num">Q6</span>
+            <div class="quiz-q-text"><p>Vì sao kiểm tra "email chưa tồn tại" ở validator vẫn chưa đủ?</p></div>
+          </div>
+          <details>
+            <summary>Xem đáp án</summary>
+            <div class="quiz-answer">
+              <span class="answer-label">✓ Đáp án</span>
+              <p>Có <em>race condition</em>: hai request cùng lúc cùng thấy "chưa tồn tại" rồi cùng ghi. Chỉ **ràng buộc <code>UNIQUE</code> của CSDL** mới đảm bảo; code nên bắt <code>DataIntegrityViolationException</code> và dịch thành 409. Kiểm tra trước chỉ để cho thông báo sớm và đẹp.</p>
+            </div>
+          </details>
+        </div>
+
+        <h2 id="tong-ket">Tổng kết</h2>
+
+        <p>Sau chương 5, bạn đã nắm:</p>
+        <ul>
+          <li>Ba lớp kiểm tra: <strong>cú pháp</strong> (Bean Validation), <strong>nghiệp vụ</strong> (service), <strong>toàn vẹn</strong> (CSDL). Frontend validate không phải bảo mật.</li>
+          <li>**<code>@Valid @RequestBody</code>** + ràng buộc trên <code>record</code>; <code>@NotBlank</code> cho chuỗi bắt buộc; <code>@Valid</code> ở trường lồng nhau.</li>
+          <li><strong>Ràng buộc tuỳ biến</strong> (<code>@Constraint</code> + <code>ConstraintValidator</code>) ở mức trường và mức lớp.</li>
+          <li><strong>Exception nghiệp vụ</strong> unchecked, có <code>code</code>; service không biết HTTP.</li>
+          <li>**<code>@RestControllerAdvice</code> + <code>ProblemDetail</code>** cho một khuôn lỗi duy nhất; lỗi validation trả <code>errors</code> theo từng trường.</li>
+          <li><strong>Không rò rỉ</strong>: chi tiết vào log kèm <code>errorId</code>, client nhận thông điệp chung; bắt <code>DataIntegrityViolationException</code> → 409.</li>
+        </ul>
+
+        <h2 id="ket-noi">Kết nối</h2>
+        <ul>
+          <li><strong>Chương 4</strong> — <code>ResponseStatusException</code> ở đó được thay bằng hệ exception &amp; handler tập trung này.</li>
+          <li><strong>Chương 6-7</strong> — <code>DataIntegrityViolationException</code>, <code>ObjectOptimisticLockingFailureException</code>; rollback chỉ với unchecked exception.</li>
+          <li><strong>Chương 8</strong> — DTO lồng nhau, MapStruct, OpenAPI mô tả các lỗi <code>400/404/409</code> này.</li>
+          <li><strong>Chương 9</strong> — <code>AuthenticationEntryPoint</code> / <code>AccessDeniedHandler</code> cũng nên trả <code>ProblemDetail</code> cho 401/403.</li>
+          <li><strong>Chương 11</strong> — test <code>@WebMvcTest</code> kiểm tra mã lỗi và <code>errors</code> của từng trường.</li>
+          <li><strong>Java chương 6</strong> — checked vs unchecked exception, <code>try-with-resources</code>: nền tảng của thiết kế exception ở đây.</li>
+          <li><strong>Networking chương 5 &amp; 10</strong> — mã trạng thái HTTP; vì sao không lộ thông tin lỗi.</li>
+        </ul>
+
+        <nav class="chapter-nav">
+          <a href="chuong4.html" class="prev">
+            <div class="dir">← Chương 4</div>
+            <div class="label">Spring MVC &amp;amp; REST API</div>
+          </a>
+          <a href="chuong6.html" class="next">
+            <div class="dir">Chương 6 →</div>
+            <div class="label">Spring Data JPA</div>
+          </a>
+        </nav>
+
+      </main>
+
+      <aside class="toc">
+        <div class="toc-label">Trong chương này</div>
+        <ul>
+          <li><a href="#vi-sao">1. Validate ở đâu, và tin ai?</a></li>
+          <li><a href="#bean-validation">2. Bean Validation với <code>@Valid</code></a></li>
+          <li class="level-3"><a href="#constraints">2.1. Bảng ràng buộc hay dùng</a></li>
+          <li class="level-3"><a href="#param-validation">2.2. Validate tham số đơn (query, path)</a></li>
+          <li class="level-3"><a href="#groups">2.3. Cùng DTO, luật khác nhau? Dùng DTO riêng</a></li>
+          <li><a href="#custom-constraint">3. Ràng buộc tuỳ biến</a></li>
+          <li class="level-3"><a href="#field-level">3.1. Mức trường: <code>@StrongPassword</code></a></li>
+          <li class="level-3"><a href="#class-level">3.2. Mức lớp: ràng buộc chéo trường</a></li>
+          <li><a href="#exception-nghiep-vu">4. Thiết kế exception nghiệp vụ</a></li>
+          <li><a href="#advice">5. <code>@RestControllerAdvice</code> — một nơi bắt mọi lỗi</a></li>
+          <li class="level-3"><a href="#problem-detail">5.1. <code>ProblemDetail</code> — định dạng lỗi chuẩn</a></li>
+          <li><a href="#xu-ly-validation">6. Chuẩn hoá lỗi validation</a></li>
+          <li><a href="#anh-xa">7. Bản đồ exception → mã HTTP</a></li>
+          <li><a href="#khong-ro-ri">8. Không rò rỉ thông tin nội bộ</a></li>
+          <li><a href="#cheat-sheet">9. Cheat sheet chương 5</a></li>
+          <li><a href="#bai-tap">Bài tập</a></li>
+          <li><a href="#quiz">Quiz</a></li>
+          <li><a href="#tong-ket">Tổng kết</a></li>
+          <li><a href="#ket-noi">Kết nối</a></li>
+        </ul>
+      </aside>
+
+    </div>
+  </div>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p>
+        Chương 5 — Validation &amp;amp; xử lý lỗi · Spring Boot sub-pillar · Pillar 9 IT Basic<br/>
+        <a href="chuong4.html">← Chương 4</a> · <a href="../index.html">Spring Boot TOC</a> · <a href="chuong6.html">Chương 6 →</a>
+      </p>
+    </div>
+  </footer>
+
+  <script src="../../shared/js/chapter.js"></script>
+</body>
+</html>
